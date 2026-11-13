@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 from test_workflow import setup, upload, xlsx
 from sqlalchemy import select
 from app.main import create_app

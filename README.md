@@ -22,3 +22,17 @@ production configuration, credentials, backups or build outputs.
 For an installed server, [deploy/README.md](deploy/README.md) is the short tool index that travels
 with a deployment payload. [deploy/UNINSTALL.md](deploy/UNINSTALL.md) explains the removal workflow
 available on the host.
+
+## License
+
+First-party LEM source code, tests, build/deployment tools, configuration, schemas and accompanying
+project documentation are licensed under the **GNU General Public License, version 3 only**
+(`GPL-3.0-only`). See [LICENSE](LICENSE) for the complete terms and warranty disclaimer.
+
+Source files carry SPDX notices. JSON data keeps its original strict format and has adjacent
+`.json.license` notices. Existing third-party license notices remain applicable; this declaration
+does not relicense Qt, Python dependencies, bundled fonts or third-party customer artwork/trademarks.
+Generated reports and customer data are not relicensed by this source-code notice.
+
+A complete license copy at [server/LICENSE](server/LICENSE) also travels with server deployment
+payloads and the API container. Bundled fonts retain [their original license](server/fonts/LICENSE.txt).

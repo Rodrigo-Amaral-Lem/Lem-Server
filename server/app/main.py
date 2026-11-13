@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 from .report_extras import validate_extras
 from sqlalchemy.orm import joinedload
 from .stations import lock_catalogue, get_or_create_station, close_identity, StationConflict

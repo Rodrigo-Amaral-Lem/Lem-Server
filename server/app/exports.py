@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 # ZIP export helpers kept free of FastAPI/SQLAlchemy so they can be tested alone.
 # The archive is written to a spooled temporary file one photograph at a time:
 # memory use no longer grows with the total size of a report's photographs.

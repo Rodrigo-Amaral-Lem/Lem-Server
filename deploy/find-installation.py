@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 # Internal Python API: resolve_target(remote_path, home, domain=""). There is no standalone CLI.
 # Reads candidate installation markers; explicit paths or unambiguous ~/apps discovery select the target.
 # Raises ValueError for ambiguous/missing auto targets rather than selecting by historical folder name.

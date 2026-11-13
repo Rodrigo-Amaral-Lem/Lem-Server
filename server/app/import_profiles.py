@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 # Built-in layouts describe field meaning, exact headers and which source cells are required.
 # Profile IDs are persisted data and deliberately retain their original spelling.
 

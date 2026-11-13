@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 # Public one-off cleanup CLI: --installation PATH previews; --delete performs irreversible removal.
 # Run from the new package outside the selected old installation, with Docker access.
 # This is neither a normal deployment nor a backup tool; see deploy/README.md.

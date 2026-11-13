@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 # Internal host pipeline: positional TARGET RESET RELEASE DOMAIN, supplied by validated SSH frontends.
 # Mutates the selected installation, builds containers, backs up or explicitly resets data and checks health.
 # Failure is not transactional rollback. Preserve config/TLS volumes and inspect errors before retrying.

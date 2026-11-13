@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 # First-install host tool, not a routine update: run as the installation account with sudo rights.
 # Changes host packages/firewall, generates private .env/credentials, creates volumes and starts services.
 # Checks existing installation/database markers before creating credentials. See docs/deployment.md.

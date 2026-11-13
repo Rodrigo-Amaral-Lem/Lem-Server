@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 # Linux host removal implementation; use uninstall-server.sh, and read deploy/UNINSTALL.md.
 # Default preview; --stop retains files/volumes, --purge removes owned resources after confirmation/backup.
 # --skip-backup only explicitly waives a fresh purge backup; retained configuration remains sensitive.

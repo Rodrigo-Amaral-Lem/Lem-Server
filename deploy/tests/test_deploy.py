@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 """No live SSH/Docker: exercise PowerShell packaging + remote flow with mocks.
 Run: PWSH=/path/to/pwsh python -m pytest deploy/tests -q
 """

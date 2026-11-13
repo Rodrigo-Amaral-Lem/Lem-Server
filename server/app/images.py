@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 # Photograph validation shared by the upload endpoint and its tests.
 # Image.verify() alone accepts truncated JPEG data, and a damaged PNG raises
 # SyntaxError there. Decode the pixels once, so a stored photograph is always

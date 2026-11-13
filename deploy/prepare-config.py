@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 # Internal config writer used by remote deployment; see deploy/README.md.
 # Preserves existing secrets/domain and selected TLS-volume identities, writing a new private output file.
 # CLI --domain ENV_FILE prints only the configured domain. Never log full input/output .env contents.

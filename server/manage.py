@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 # Local bootstrap/recovery CLI: create-admin or reset-password, with required --email.
 # Uses DATABASE_URL (SQLite in the current directory by default), prompts twice and commits directly.
 # Reset revokes that account's sessions. Prefer app.admin_cli for routine administration.

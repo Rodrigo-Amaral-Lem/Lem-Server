@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 # Internal packaging CLI: python deploy-package.py PROJECT_ROOT NEW_OUTPUT_ZIP.
 # Standard library only; reads server/shared/deploy and .dockerignore, writes a new payload and prints SHA-256.
 # No SSH or running service is touched. Reusing an existing output path fails instead of overwriting it.

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 # Credential primitives used by authentication. Password and token representations differ:
 # passwords use salted scrypt; random session tokens use an SHA-256 lookup digest.
 

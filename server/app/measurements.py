@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 """Measurement format and voltage compliance. Out-of-range readings remain recordable."""
 import re
 

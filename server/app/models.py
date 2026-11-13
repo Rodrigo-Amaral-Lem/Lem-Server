@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 # Persistent schema shared by SQLite development/tests and PostgreSQL deployment.
 # create_all creates missing tables; it is not an automatic column-migration system.
 # Keep storage identifiers stable across app branding changes. See docs/architecture-and-api.md in the Server repository.

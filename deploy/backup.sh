@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 # Host tool: run from an installed checkout; requires a running Compose database.
 # Writes a private custom-format pg_dump under deploy/backups, including database-stored evidence.
 # Does not back up .env or certificate volumes. See docs/administration.md in a source checkout.

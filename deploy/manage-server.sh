@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 # Host administration wrapper: manage-server.sh help, or no arguments for the interactive console.
 # Requires Docker access and this installation's deploy/.env; forwards arguments inside the API container.
 # Commands can mutate accounts, access, ownership and data. See docs/administration.md.

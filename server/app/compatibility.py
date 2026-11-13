@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 """Server-owned client release policy; never infer compatibility from authentication.
 
 Versionless clients are rejected too, so releases predating the handshake cannot

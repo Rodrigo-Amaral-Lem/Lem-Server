@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 FROM python:3.12-slim
 WORKDIR /srv
 COPY server/requirements.txt ./requirements.txt

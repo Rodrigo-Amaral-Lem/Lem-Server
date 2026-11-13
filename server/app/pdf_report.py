@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 from .measurements import format_value, outside
 # PDF presentation of a frozen report, with Europe/Lisbon dates and resized image renditions.
 # Original photograph bytes remain unchanged in the database and downloadable ZIP.

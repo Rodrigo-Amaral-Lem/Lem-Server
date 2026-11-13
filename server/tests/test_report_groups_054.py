@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 """Release 0.1.54: checklist semantics, signature validation and exported evidence."""
 import copy, uuid
 from io import BytesIO

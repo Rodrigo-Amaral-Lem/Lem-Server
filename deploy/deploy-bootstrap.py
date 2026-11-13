@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 # Internal remote entry point: one base64 JSON argument prepared by the SSH frontend.
 # Validates staging identity/checksum/paths before extracting and invoking remote-deploy.sh.
 # Do not call this directly to bypass frontend target validation; see deploy/README.md.

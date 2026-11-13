@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 from app.main import TEMPLATE
 """Deletion permissions, revision conflicts, photos and stale-client protection."""
 

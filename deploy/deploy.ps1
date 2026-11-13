@@ -1,4 +1,7 @@
 #requires -Version 5.1
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 # Public workstation entry point; see deploy/README.md and docs/deployment.md.
 # Default updates preserve data/configuration; -ResetDatabase is an explicit destructive test reset.
 # -PackageOnly writes a transport payload without SSH. Keep that output under ongoing_work.

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 """Independent station identity, contract membership, and verified field updates."""
 from copy import deepcopy
 from sqlalchemy import select, update

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 # Import pipeline: bounded workbook -> sheet/header preview -> validated records.
 # No macro execution or formula calculation; data_only reads cached cell values.
 

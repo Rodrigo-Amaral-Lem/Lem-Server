@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 """Bounded evidence validation. Originals are never transcoded.
 
 ffprobe is supplied by the server image. Upload admission serializes expensive

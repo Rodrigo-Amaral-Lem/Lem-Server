@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
+
 """Local server administration. OS/Docker access is the authorization boundary.
 
 Passwords are never command-line arguments or included in account listings.
