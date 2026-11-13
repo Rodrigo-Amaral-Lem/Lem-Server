@@ -1,3 +1,7 @@
+# Internal remote entry point: one base64 JSON argument prepared by the SSH frontend.
+# Validates staging identity/checksum/paths before extracting and invoking remote-deploy.sh.
+# Do not call this directly to bypass frontend target validation; see deploy/README.md.
+
 # Runs on the remote host after SSH transfer. Validate archive bytes and every path
 # before extraction, then locate the installation and hand off to remote-deploy.sh.
 

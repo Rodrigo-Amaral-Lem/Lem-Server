@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# First-install host tool, not a routine update: run as the installation account with sudo rights.
+# Changes host packages/firewall, generates private .env/credentials, creates volumes and starts services.
+# Checks existing installation/database markers before creating credentials. See docs/deployment.md.
+
 # First install on a fresh Ubuntu 24.04/26.04 server. Run as lem, not with sudo bash.
 set -euo pipefail
 umask 077

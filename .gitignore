@@ -14,3 +14,14 @@
 **/.qtcreator/
 **/*.user
 **/.qmlls.ini
+
+# Local agent instructions and coordination notes (keep product docs tracked).
+AGENTS.md
+AGENTS.override.md
+.agents/
+.agent-notes/
+.agent-handoffs/
+*.agent-notes.md
+*.agent-notes.txt
+*.agent-handoff.md
+*.agent-handoff.txt

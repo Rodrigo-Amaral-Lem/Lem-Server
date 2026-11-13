@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Public one-off cleanup CLI: --installation PATH previews; --delete performs irreversible removal.
+# Run from the new package outside the selected old installation, with Docker access.
+# This is neither a normal deployment nor a backup tool; see deploy/README.md.
+
 """Remove one explicitly selected prototype before a clean Lem installation.
 
 Run this from the NEW package, outside the old installation. No name of an older

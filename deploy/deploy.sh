@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
+# Public workstation entry point; see deploy/README.md and docs/deployment.md.
+# Use --help for validated SSH/target flags. --package-only avoids contacting the server.
+# A normal update preserves data/configuration; --reset-database is an explicit destructive reset.
+
 # Stages: validate local arguments -> package -> SSH transfer -> remote bootstrap.
-# See docs/developer/platform-and-deployment.md for the local/remote responsibility split.
+# See docs/deployment.md for the local/remote responsibility split.
 # Run on the personal Linux laptop, not on the server.
 set -euo pipefail
 umask 077

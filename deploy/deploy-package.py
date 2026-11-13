@@ -1,3 +1,7 @@
+# Internal packaging CLI: python deploy-package.py PROJECT_ROOT NEW_OUTPUT_ZIP.
+# Standard library only; reads server/shared/deploy and .dockerignore, writes a new payload and prints SHA-256.
+# No SSH or running service is touched. Reusing an existing output path fails instead of overwriting it.
+
 # Deployment packaging boundary: include only server/shared/deploy and .dockerignore.
 # The distributable app/source archive is broader; this helper deliberately excludes client files.
 

@@ -1,3 +1,7 @@
+# Internal config writer used by remote deployment; see deploy/README.md.
+# Preserves existing secrets/domain and selected TLS-volume identities, writing a new private output file.
+# CLI --domain ENV_FILE prints only the configured domain. Never log full input/output .env contents.
+
 # Prepare a private replacement .env while keeping configured secrets and HTTPS volumes.
 # Only selected deployment identifiers are replaced; the file contents must not be logged.
 

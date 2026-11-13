@@ -1,6 +1,6 @@
 # Persistent schema shared by SQLite development/tests and PostgreSQL deployment.
 # create_all creates missing tables; it is not an automatic column-migration system.
-# Keep storage identifiers stable across app branding changes. See server-and-api.md.
+# Keep storage identifiers stable across app branding changes. See docs/architecture-and-api.md in the Server repository.
 
 import os, json, uuid
 from datetime import datetime, timezone

@@ -1,16 +1,24 @@
-# LEM Server — repositório da API
+# LEM Server
 
-Código da API em `server/`; instalação, Docker e gestão do serviço em `deploy/`. Documentação específica em `docs/`. Recursos de teste de vídeo próprios em `server/tests/fixtures/`.
+The FastAPI service for contracts, charger catalogues, maintenance reports and evidence. The current
+API/source version is **0.1.57** and the shared checklist is **6**.
 
-Usar `../ongoing_work/` como diretório de trabalho, incluindo ambientes Python, bases de teste e logs. A partir desse diretório, com as dependências de `../Server/server/requirements.txt`, pytest, httpx e pypdf instaladas:
+| Guide | Use it for |
+| --- | --- |
+| [Architecture and API](docs/architecture-and-api.md) | Modules, persistent data, permissions, request flow and endpoint groups |
+| [Deployment](docs/deployment.md) | Local development, Ubuntu installation, SSH updates and configuration |
+| [Administration](docs/administration.md) | Accounts, imports, station identity, ownership, backup and removal |
+| [Testing](docs/testing.md) | API/deployment tests, prerequisites and interpretation of results |
 
-```powershell
-$env:PYTHONPATH = (Resolve-Path ../Server/server).Path
-python -m pytest ../Server/server/tests -q --basetemp=server-tests-temp
-```
+`server/` contains the service. `deploy/` contains installation and operational tools. `shared/` is
+a versioned snapshot of `../Common/shared/`, so this repository can be deployed independently.
+`examples/` contains shipped demonstration output, not live customer records.
 
-Os testes de vídeo necessitam de ffprobe no PATH. Os testes de alinhamento entre versões procuram o repositório irmão `App`; pode indicar outra localização através de `LEM_APP_REPO`. Esse teste é explicitamente ignorado quando o cliente não está disponível; a API e os restantes testes não dependem dele.
+Run local commands from `../ongoing_work/` and keep environments, test databases, logs and packages
+there. See the [workspace guide](../Common/docs/workspace.md) and
+[report contract](../Common/docs/report-contract.md) for cross-repository rules. Do not version
+production configuration, credentials, backups or build outputs.
 
-`shared/` é uma cópia versionada de `../Common/shared/`, para permitir implantação independente. Alterar a origem em Common e usar `python ../Common/tools/sync_shared.py --write`. Verificar e fazer commit dos três repositórios quando o contrato mudar. A instalação do servidor continua a incluir `server/`, `shared/`, `deploy/` e `.dockerignore`.
-
-Base importada: `Lem_Qt_0.1.57_GeneralNotesAndSignaturePhoto.zip`. Nunca versionar `.env`, dados de produção, backups ou credenciais.
+For an installed server, [deploy/README.md](deploy/README.md) is the short tool index that travels
+with a deployment payload. [deploy/UNINSTALL.md](deploy/UNINSTALL.md) explains the removal workflow
+available on the host.

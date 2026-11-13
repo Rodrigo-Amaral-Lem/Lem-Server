@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Linux host removal implementation; use uninstall-server.sh, and read deploy/UNINSTALL.md.
+# Default preview; --stop retains files/volumes, --purge removes owned resources after confirmation/backup.
+# --skip-backup only explicitly waives a fresh purge backup; retained configuration remains sensitive.
+
 """Stop or uninstall exactly one Lem installation. Default: preview only."""
 import argparse
 from datetime import datetime, timezone

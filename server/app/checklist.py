@@ -86,7 +86,7 @@ def for_charger(template, details):
 
 
 def corrected_draft_template(template, status):
-    """Correct v6 manual fields in editable drafts without changing closed history."""
+    """Apply current v6 draft rules/order and optional notes, preserving closed history."""
     if status != "draft" or template.get("version") != 6:
         return template
     result = deepcopy(template)

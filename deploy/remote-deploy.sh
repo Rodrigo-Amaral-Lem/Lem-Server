@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Internal host pipeline: positional TARGET RESET RELEASE DOMAIN, supplied by validated SSH frontends.
+# Mutates the selected installation, builds containers, backs up or explicitly resets data and checks health.
+# Failure is not transactional rollback. Preserve config/TLS volumes and inspect errors before retrying.
+
 # Stages: validate/lock -> inspect preserved volumes -> build -> backup/reset -> replace -> health check.
 # Do not reorder these operations: building precedes stopping the running API.
 # Shared remote operation for deploy.ps1 and deploy.sh.

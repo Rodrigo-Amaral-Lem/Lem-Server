@@ -3,7 +3,7 @@ from sqlalchemy.orm import joinedload
 from .stations import lock_catalogue, get_or_create_station, close_identity, StationConflict
 # FastAPI composition root: dependencies, authorization and transactional endpoints.
 # All handlers are registered inside create_app so tests can supply an isolated DB.
-# Read docs/developer/server-and-api.md alongside this file; models.py owns the schema.
+# Read docs/architecture-and-api.md alongside this file; models.py owns the schema.
 # Comments explain current behavior, including deletion and conflict exceptions.
 
 import json, os, secrets, hashlib, uuid, threading, asyncio, logging

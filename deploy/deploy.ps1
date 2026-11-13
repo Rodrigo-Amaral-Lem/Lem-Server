@@ -1,4 +1,8 @@
-﻿#requires -Version 5.1
+#requires -Version 5.1
+# Public workstation entry point; see deploy/README.md and docs/deployment.md.
+# Default updates preserve data/configuration; -ResetDatabase is an explicit destructive test reset.
+# -PackageOnly writes a transport payload without SSH. Keep that output under ongoing_work.
+
 <#
 .SYNOPSIS
 Deploy da API LEM por SSH, a partir de Windows PowerShell ou PowerShell 7.

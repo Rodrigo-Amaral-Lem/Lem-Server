@@ -1,3 +1,7 @@
+# Internal Python API: resolve_target(remote_path, home, domain=""). There is no standalone CLI.
+# Reads candidate installation markers; explicit paths or unambiguous ~/apps discovery select the target.
+# Raises ValueError for ambiguous/missing auto targets rather than selecting by historical folder name.
+
 # Resolve the target from installation files and optionally its configured domain.
 # Ambiguity is an error; folder names are not a reliable identity for deployed data.
 

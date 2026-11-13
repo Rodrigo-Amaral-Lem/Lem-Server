@@ -1,4 +1,4 @@
-"""Validate handwritten-signature references without embedding image data in JSON."""
+"""Validate drawn/imported PNG signature references without embedding image bytes in JSON."""
 from datetime import datetime
 
 
