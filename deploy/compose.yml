@@ -1,0 +1,57 @@
+name: lem
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: lem
+      POSTGRES_USER: lem
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD em .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U lem -d lem']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  api:
+    image: lem-api:0.1.57
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://lem:${POSTGRES_PASSWORD}@db:5432/lem
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@lem.pt}
+      ADMIN_NAME: ${ADMIN_NAME:-Administrador}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Defina ADMIN_PASSWORD em .env}
+      LEM_MIN_CLIENT_VERSION: ${LEM_MIN_CLIENT_VERSION:-0.1.57}
+      LEM_LATEST_CLIENT_VERSION: ${LEM_LATEST_CLIENT_VERSION:-0.1.57}
+      LEM_UPDATE_URL: ${LEM_UPDATE_URL:-}
+      LEM_EXPORT_CONCURRENCY: ${LEM_EXPORT_CONCURRENCY:-2}
+      LEM_IMAGE_CONCURRENCY: ${LEM_IMAGE_CONCURRENCY:-1}
+      LEM_API_DOCS: ${LEM_API_DOCS:-0}
+      CHECKLIST_FILE: /srv/shared/checklist-v1.json
+    expose: ['8000']
+  proxy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [api]
+    ports: ['80:80', '443:443']
+    environment:
+      LEM_DOMAIN: ${LEM_DOMAIN:-lem.rodrod.pt}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+volumes:
+  pgdata:
+  caddydata:
+    external: true
+    name: ${LEM_TLS_DATA_VOLUME:-lem_caddydata}
+  caddyconfig:
+    external: true
+    name: ${LEM_TLS_CONFIG_VOLUME:-lem_caddyconfig}

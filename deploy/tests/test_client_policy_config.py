@@ -1,0 +1,36 @@
+"""Updating server code must also admit its accompanying client release."""
+
+import json
+import runpy
+from pathlib import Path
+import pytest
+
+prepare = runpy.run_path(str(Path(__file__).resolve().parents[1] / "prepare-config.py"))["prepare"]
+
+
+@pytest.mark.parametrize(
+    "latest,expected", [("0.1.28", "0.1.57"), ("0.1.45", "0.1.57"), ("0.1.52", "0.1.57"), ("0.1.57", "0.1.57")]
+)
+def test_promote_pinned_latest_without_changing_minimum_or_secrets(tmp_path, latest, expected):
+    env = tmp_path / "old.env"
+    meta = tmp_path / "meta.json"
+    out = tmp_path / "next.env"
+    env.write_text(
+        f"LEM_DOMAIN=test.example.org\nADMIN_PASSWORD=PRIVATE_FIXTURE\nLEM_MIN_CLIENT_VERSION=0.1.28\nLEM_LATEST_CLIENT_VERSION={latest}\n"
+    )
+    meta.write_text(
+        json.dumps(
+            {
+                "volumes": {
+                    "caddydata": {"name": "lem_caddydata"},
+                    "caddyconfig": {"name": "lem_caddyconfig"},
+                }
+            }
+        )
+    )
+    prepare(env, meta, out)
+    result = out.read_text()
+    assert f"LEM_LATEST_CLIENT_VERSION={expected}\n" in result
+    assert "LEM_MIN_CLIENT_VERSION=0.1.57\n" in result
+    assert "ADMIN_PASSWORD=PRIVATE_FIXTURE\n" in result
+    assert out.stat().st_mode & 0o077 == 0

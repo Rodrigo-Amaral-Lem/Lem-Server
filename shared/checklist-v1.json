@@ -1,0 +1,504 @@
+{
+  "id": "pcve-maintenance",
+  "version": 6,
+  "title": "Manutenção preventiva de PCVE",
+  "sections": [
+    {
+      "id": "SEG",
+      "title": "SEG - Segurança",
+      "items": [
+        {
+          "id": "SEG.01",
+          "label": "Área delimitada de segurança.",
+          "kind": "status",
+          "photo_required": true
+        },
+        {
+          "id": "SEG.02",
+          "label": "Tem os EPIs necessários para realizar o serviço?",
+          "kind": "status",
+          "photo_required": false,
+          "notes_disabled": true,
+          "media_disabled": true
+        },
+        {
+          "id": "SEG.03",
+          "label": "Os EPIs estão em bom estado e dentro da validade?",
+          "kind": "status",
+          "photo_required": false,
+          "notes_disabled": true,
+          "media_disabled": true
+        },
+        {
+          "id": "SEG.04",
+          "label": "Tem ferramentas manuais isoladas, multímetro e analisador de multifunções?",
+          "kind": "status",
+          "photo_required": false,
+          "notes_disabled": true,
+          "media_disabled": true
+        },
+        {
+          "id": "SEG.05",
+          "label": "Tem os elementos para aplicar o procedimento Lockout/Tagout?",
+          "kind": "status",
+          "photo_required": false,
+          "notes_disabled": true,
+          "media_disabled": true
+        },
+        {
+          "id": "SEG.06",
+          "label": "Tem condições de trabalho adequadas para realizar o serviço em segurança (chuva, vento, visibilidade, etc...)?",
+          "kind": "status",
+          "photo_required": false,
+          "notes_disabled": true,
+          "media_disabled": true
+        },
+        {
+          "id": "SEG.07",
+          "label": "Observações gerais de segurança",
+          "kind": "notes",
+          "photo_required": false,
+          "optional": true
+        }
+      ]
+    },
+    {
+      "id": "SITE",
+      "title": "SITE - Site",
+      "items": [
+        {
+          "id": "SITE.01",
+          "label": "SITE - Verifique a limpeza geral",
+          "kind": "status",
+          "photo_required": false
+        },
+        {
+          "id": "SITE.02",
+          "label": "Verifique o estado da pintura / sinalização horizontal",
+          "kind": "status",
+          "photo_required": true
+        },
+        {
+          "id": "SITE.03",
+          "label": "Verifique o estado da sinalética vertical (carregamento VE e números de lugares)",
+          "kind": "status",
+          "photo_required": true
+        },
+        {
+          "id": "SITE.04",
+          "label": "Verifique o estado da proteção mecânica (apertos, retrorrefletores, estado geral)",
+          "kind": "status",
+          "photo_required": true
+        },
+        {
+          "id": "SITE.05",
+          "label": "SITE - Verifique possíveis sinais de vandalismo (cabos cortados, fechadura forçada, carregador danificado, etc.)",
+          "kind": "status",
+          "photo_required": false
+        }
+      ]
+    },
+    {
+      "id": "QVE",
+      "title": "QVE - QVE e Botoneira",
+      "items": [
+        {
+          "id": "QVE.01",
+          "label": "Botão de emergência - Verifique integridade",
+          "kind": "status",
+          "photo_required": true
+        },
+        {
+          "id": "QVE.02",
+          "label": "Botão de emergência - Verifique o correto funcionamento",
+          "kind": "status",
+          "photo_required": false
+        },
+        {
+          "id": "QVE.03",
+          "label": "Botão de emergência - Verifique a dupla sinalização",
+          "kind": "status",
+          "photo_required": false
+        },
+        {
+          "id": "QVE.04",
+          "label": "QVE - Fotografias (QVE aberto sem espelhos)",
+          "kind": "status",
+          "photo_required": true
+        },
+        {
+          "id": "QVE.05",
+          "label": "QVE - Revisão do grau de proteção IP (isolamento, fechaduras, etc.)",
+          "kind": "status",
+          "photo_required": false
+        },
+        {
+          "id": "QVE.06",
+          "label": "QVE - Verifique a inexistência de condensação ou água no interior",
+          "kind": "status",
+          "photo_required": false
+        },
+        {
+          "id": "QVE.07",
+          "label": "QVE - Verifique a inexistência de sinais de sobreaquecimento no interior",
+          "kind": "status",
+          "photo_required": false
+        },
+        {
+          "id": "QVE.08",
+          "label": "QVE - Verifique a limpeza interna e externa",
+          "kind": "status",
+          "photo_required": false
+        },
+        {
+          "id": "QVE.09",
+          "label": "QVE - Verifique apertos",
+          "kind": "status",
+          "photo_required": false
+        },
+        {
+          "id": "QVE.10",
+          "label": "QVE - Verifique sinalética QVE (quadro elétrico e corte geral)",
+          "kind": "status",
+          "photo_required": false
+        },
+        {
+          "id": "QVE.11",
+          "label": "Teste o correto funcionamento do interruptor geral",
+          "kind": "status",
+          "photo_required": false
+        },
+        {
+          "id": "QVE.12",
+          "label": "Teste o correto funcionamento do(s) disjuntor(es)",
+          "kind": "status",
+          "photo_required": false
+        },
+        {
+          "id": "QVE.13",
+          "label": "Verifique que o esquema unifilar está presente no QVE",
+          "kind": "status",
+          "photo_required": false
+        },
+        {
+          "id": "QVE.14",
+          "label": "QVE - Observações gerais",
+          "kind": "notes",
+          "photo_required": false,
+          "optional": true
+        }
+      ]
+    },
+    {
+      "id": "EST",
+      "title": "EST - Estado Geral",
+      "items": [
+        {
+          "id": "EST.01",
+          "label": "Fotografias interior e exterior do carregador antes da tarefa executada (visualizar todos os componentes internos e externos)",
+          "kind": "status",
+          "photo_required": true
+        },
+        {
+          "id": "EST.02",
+          "label": "Indique o fabricante do carregador",
+          "kind": "text",
+          "photo_required": false
+        },
+        {
+          "id": "EST.03",
+          "label": "Indique o modelo completo do carregador",
+          "kind": "text",
+          "photo_required": false
+        },
+        {
+          "id": "EST.04",
+          "label": "Indique o(s) número(s) de série do carregador (e dispensers, caso aplicável)",
+          "kind": "text",
+          "photo_required": false
+        },
+        {
+          "id": "EST.05",
+          "label": "Fotografia da chapa de características",
+          "kind": "status",
+          "photo_required": true
+        },
+        {
+          "id": "EST.06",
+          "label": "Verifique o ID da estação",
+          "kind": "status",
+          "photo_required": true
+        },
+        {
+          "id": "EST.07",
+          "label": "Revisão do grau de proteção IP (bucins de cabos de borracha ou espuma em boas condições?)",
+          "kind": "status",
+          "photo_required": false
+        },
+        {
+          "id": "EST.08",
+          "label": "Verifique a inexistência de condensação ou água no ecrã ou interior do carregador",
+          "kind": "status",
+          "photo_required": false
+        },
+        {
+          "id": "EST.09",
+          "label": "Verifique a inexistência de sinais de sobreaquecimento no interior do carregador; utilizar termografia para melhor despiste",
+          "kind": "status",
+          "photo_required": false
+        },
+        {
+          "id": "EST.10",
+          "label": "Verifique a limpeza externa e interna",
+          "kind": "status",
+          "photo_required": false
+        },
+        {
+          "id": "EST.11",
+          "label": "Verifique o estado dos vinis de decoração",
+          "kind": "status",
+          "photo_required": false
+        },
+        {
+          "id": "EST.12",
+          "label": "Verifique o estado físico dos componentes do carregador (conectores, suportes, ecrã, etc.)",
+          "kind": "status",
+          "photo_required": false
+        },
+        {
+          "id": "EST.13",
+          "label": "Verifique se as instruções e o tarifário estão visíveis e em boas condições",
+          "kind": "status",
+          "photo_required": true
+        },
+        {
+          "id": "EST.14",
+          "label": "Verifique se o ecrã funciona corretamente",
+          "kind": "status",
+          "photo_required": false
+        },
+        {
+          "id": "EST.15",
+          "label": "Verifique se o terminal de pagamento (POS) está instalado e em boas condições",
+          "kind": "status",
+          "photo_required": false
+        },
+        {
+          "id": "EST.16",
+          "label": "Verifique se os autocolantes DGEG e apoio ao cliente estão visíveis e em boas condições",
+          "kind": "status",
+          "photo_required": true
+        },
+        {
+          "id": "EST.17",
+          "label": "Verifique se todo o hardware da estação de carregamento está a funcionar corretamente",
+          "kind": "status",
+          "photo_required": false
+        }
+      ]
+    },
+    {
+      "id": "MAN",
+      "title": "MAN - Manutenção",
+      "items": [
+        {
+          "id": "MAN.01",
+          "label": "Atualize o software da estação de carregamento (indicar a versão ou NA)",
+          "kind": "text",
+          "photo_required": false
+        },
+        {
+          "id": "MAN.02",
+          "label": "Limpeza dos módulos de potência",
+          "kind": "text",
+          "photo_required": false
+        },
+        {
+          "id": "MAN.03",
+          "label": "Material utilizado",
+          "kind": "text",
+          "photo_required": false
+        },
+        {
+          "id": "MAN.04",
+          "label": "Medir valor de tensão L1 - L2 (360-440 V) e registar foto",
+          "kind": "text",
+          "photo_required": true
+        },
+        {
+          "id": "MAN.05",
+          "label": "Medir valor de tensão L1 - L3 (360-440 V) e registar foto",
+          "kind": "text",
+          "photo_required": true
+        },
+        {
+          "id": "MAN.06",
+          "label": "Medir valor de tensão L2 - L3 (360-440 V) e registar foto",
+          "kind": "text",
+          "photo_required": true
+        },
+        {
+          "id": "MAN.07",
+          "label": "Medir valor de tensão N - L1 (207-253 V) e registar foto",
+          "kind": "text",
+          "photo_required": true
+        },
+        {
+          "id": "MAN.08",
+          "label": "Medir valor de tensão N - L2 (207-253 V) e registar foto",
+          "kind": "text",
+          "photo_required": true
+        },
+        {
+          "id": "MAN.09",
+          "label": "Medir valor de tensão N - L3 (207-253 V) e registar foto",
+          "kind": "text",
+          "photo_required": true
+        },
+        {
+          "id": "MAN.10",
+          "label": "Medir valor de tensão N - T (<50 V) e registar foto",
+          "kind": "text",
+          "photo_required": true
+        },
+        {
+          "id": "MAN.11",
+          "label": "Proteção diferencial QVE e Carregador - Indicar a corrente de disparo configurada",
+          "kind": "text",
+          "photo_required": false
+        },
+        {
+          "id": "MAN.12",
+          "label": "Proteção diferencial QVE e Carregador - Indique o valor da corrente de disparo com testador",
+          "kind": "text",
+          "photo_required": true,
+          "allow_status": true,
+          "reading_required": true,
+          "photo_always": true
+        },
+        {
+          "id": "MAN.13",
+          "label": "Proteção diferencial QVE e Carregador - Teste manual do dispositivo",
+          "kind": "status",
+          "photo_required": false
+        },
+        {
+          "id": "MAN.14",
+          "label": "Teste de isolamento: Terra - L1 (>500 MΩ)",
+          "kind": "text",
+          "photo_required": false,
+          "allow_status": true,
+          "reading_required": true
+        },
+        {
+          "id": "MAN.15",
+          "label": "Teste de isolamento: Terra - L2 (>500 MΩ)",
+          "kind": "text",
+          "photo_required": false,
+          "allow_status": true,
+          "reading_required": true
+        },
+        {
+          "id": "MAN.16",
+          "label": "Teste de isolamento: Terra - L3 (>500 MΩ)",
+          "kind": "text",
+          "photo_required": false,
+          "allow_status": true,
+          "reading_required": true
+        },
+        {
+          "id": "MAN.17",
+          "label": "Teste de isolamento: Terra - N (>500 MΩ)",
+          "kind": "text",
+          "photo_required": false,
+          "allow_status": true,
+          "reading_required": true
+        },
+        {
+          "id": "MAN.18",
+          "label": "Valor da resistência da terra",
+          "kind": "text",
+          "photo_required": false,
+          "allow_status": true,
+          "reading_required": true
+        },
+        {
+          "id": "MAN.19",
+          "label": "Verifique o estado dos filtros",
+          "kind": "status",
+          "photo_required": false
+        },
+        {
+          "id": "MAN.20",
+          "label": "Verifique todos os apertos do carregador (fontes de alimentação, disjuntores diferenciais, disjuntores, contadores, placas de hardware, etc.)",
+          "kind": "status",
+          "photo_required": false
+        },
+        {
+          "id": "MAN.21",
+          "label": "Observações gerais da manutenção",
+          "kind": "notes",
+          "photo_required": false,
+          "optional": true
+        }
+      ]
+    },
+    {
+      "id": "CARG",
+      "title": "CARG - Testes de Carga",
+      "items": [
+        {
+          "id": "CARG.01.01",
+          "label": "Teste de carga do conector tipo não indicado",
+          "kind": "status",
+          "photo_required": true,
+          "na_notes_required": true
+        },
+        {
+          "id": "CARG.04",
+          "label": "Verificar funcionamento do leitor RFID",
+          "kind": "status",
+          "photo_required": false
+        },
+        {
+          "id": "CARG.05",
+          "label": "Verifique o correto funcionamento dos meters no carregador - tire fotografias",
+          "kind": "status",
+          "photo_required": true,
+          "na_notes_required": true
+        },
+        {
+          "id": "CARG.06",
+          "label": "Verifique o funcionamento das luzes e ventiladores",
+          "kind": "status",
+          "photo_required": false
+        }
+      ]
+    },
+    {
+      "id": "FIN",
+      "title": "FIN - Informações Gerais e Final",
+      "items": [
+        {
+          "id": "FIN.01",
+          "label": "Fotografia da Estação de Carregamento após intervenção",
+          "kind": "status",
+          "photo_required": true
+        },
+        {
+          "id": "FIN.02",
+          "label": "Nome e assinatura do técnico",
+          "kind": "text",
+          "photo_required": false,
+          "supports_signature": true
+        },
+        {
+          "id": "FIN.03",
+          "label": "Observações",
+          "kind": "text",
+          "photo_required": false
+        }
+      ]
+    }
+  ]
+}

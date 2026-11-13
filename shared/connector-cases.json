@@ -1,0 +1,116 @@
+[
+  {
+    "input": "CCS2, CCS2",
+    "names": [
+      "CCS2",
+      "CCS2"
+    ],
+    "labels": [
+      "Teste de carga do conector CCS2 #1",
+      "Teste de carga do conector CCS2 #2"
+    ]
+  },
+  {
+    "input": "Mennekes Type 2; CCS2; CHAdeMO",
+    "names": [
+      "Mennekes Type 2",
+      "CCS2",
+      "CHAdeMO"
+    ]
+  },
+  {
+    "input": "2x CCS2 / Type 2",
+    "names": [
+      "CCS2",
+      "CCS2",
+      "Mennekes Type 2"
+    ]
+  },
+  {
+    "input": "CCS2 x2|AC",
+    "names": [
+      "CCS2",
+      "CCS2",
+      "AC (tipo não indicado)"
+    ]
+  },
+  {
+    "input": [
+      "CCS",
+      "ccs2",
+      "T2"
+    ],
+    "names": [
+      "CCS",
+      "CCS2",
+      "Mennekes Type 2"
+    ]
+  },
+  {
+    "input": "CCS1, CHAdeMO, Outro, outro",
+    "names": [
+      "CCS1",
+      "CHAdeMO",
+      "Outro",
+      "Outro"
+    ]
+  },
+  {
+    "input": "3×Mennekes",
+    "names": [
+      "Mennekes Type 2",
+      "Mennekes Type 2",
+      "Mennekes Type 2"
+    ]
+  },
+  {
+    "input": "",
+    "names": []
+  },
+  {
+    "input": null,
+    "names": []
+  },
+  {
+    "input": "N/A",
+    "names": []
+  },
+  {
+    "input": "0x CCS2",
+    "error": true
+  },
+  {
+    "input": "65x CCS2",
+    "error": true
+  },
+  {
+    "input": "123",
+    "error": true
+  },
+  {
+    "input": "CCS2, N/A; T2",
+    "names": [
+      "CCS2",
+      "Mennekes Type 2"
+    ]
+  },
+  {
+    "input": [
+      "CCS2 / n / a",
+      " N/A "
+    ],
+    "names": [
+      "CCS2"
+    ]
+  },
+  {
+    "input": "N/A / N/A",
+    "names": []
+  },
+  {
+    "input": "CCS2; 2x N/A; NA x3",
+    "names": [
+      "CCS2"
+    ]
+  }
+]

@@ -1,0 +1,7 @@
+{$LEM_DOMAIN} {
+    request_body {
+        max_size 25MB
+    }
+    encode gzip
+    reverse_proxy api:8000
+}

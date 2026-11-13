@@ -1,0 +1,4 @@
+# Formatting configuration only; runtime dependencies remain in requirements.txt.
+[tool.black]
+line-length = 100
+target-version = ["py312"]

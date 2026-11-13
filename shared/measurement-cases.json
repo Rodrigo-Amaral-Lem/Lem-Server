@@ -1,0 +1,436 @@
+[
+  {
+    "id": "MAN.04",
+    "input": "359,99",
+    "formatted": "359,99 V",
+    "nok": true
+  },
+  {
+    "id": "MAN.04",
+    "input": "360",
+    "formatted": "360 V",
+    "nok": false
+  },
+  {
+    "id": "MAN.04",
+    "input": "440.00 V",
+    "formatted": "440,00 V",
+    "nok": false
+  },
+  {
+    "id": "MAN.04",
+    "input": "440,01",
+    "formatted": "440,01 V",
+    "nok": true
+  },
+  {
+    "id": "MAN.04",
+    "input": "999.99",
+    "formatted": "999,99 V",
+    "nok": true
+  },
+  {
+    "id": "MAN.07",
+    "input": "206,99",
+    "formatted": "206,99 V",
+    "nok": true
+  },
+  {
+    "id": "MAN.07",
+    "input": "207",
+    "formatted": "207 V",
+    "nok": false
+  },
+  {
+    "id": "MAN.07",
+    "input": "238.3",
+    "formatted": "238,3 V",
+    "nok": false
+  },
+  {
+    "id": "MAN.07",
+    "input": "253",
+    "formatted": "253 V",
+    "nok": false
+  },
+  {
+    "id": "MAN.07",
+    "input": "253,01 V",
+    "formatted": "253,01 V",
+    "nok": true
+  },
+  {
+    "id": "MAN.10",
+    "input": "0",
+    "formatted": "0 V",
+    "nok": false
+  },
+  {
+    "id": "MAN.10",
+    "input": "49,99",
+    "formatted": "49,99 V",
+    "nok": false
+  },
+  {
+    "id": "MAN.10",
+    "input": "50",
+    "formatted": "50 V",
+    "nok": true
+  },
+  {
+    "id": "MAN.10",
+    "input": "50,01 V",
+    "formatted": "50,01 V",
+    "nok": true
+  },
+  {
+    "id": "MAN.18",
+    "input": "4564.4",
+    "formatted": "4564,4 Ω",
+    "nok": false
+  },
+  {
+    "id": "MAN.18",
+    "input": "99999,99 Ω",
+    "formatted": "99999,99 Ω",
+    "nok": false
+  },
+  {
+    "id": "MAN.18",
+    "input": "0,01",
+    "formatted": "0,01 Ω",
+    "nok": false
+  },
+  {
+    "id": "MAN.04",
+    "input": "NA",
+    "formatted": "Não Aplicável",
+    "nok": false
+  },
+  {
+    "id": "MAN.04",
+    "input": "N/A",
+    "formatted": "Não Aplicável",
+    "nok": false
+  },
+  {
+    "id": "MAN.04",
+    "input": "Não Aplicavel",
+    "formatted": "Não Aplicável",
+    "nok": false
+  },
+  {
+    "id": "MAN.04",
+    "input": "Não Aplicável",
+    "formatted": "Não Aplicável",
+    "nok": false
+  },
+  {
+    "id": "MAN.04",
+    "input": "não aplicável",
+    "formatted": "Não Aplicável",
+    "nok": false
+  },
+  {
+    "id": "MAN.04",
+    "input": "",
+    "invalid": true
+  },
+  {
+    "id": "MAN.04",
+    "input": "-1",
+    "invalid": true
+  },
+  {
+    "id": "MAN.04",
+    "input": "1,234",
+    "invalid": true
+  },
+  {
+    "id": "MAN.04",
+    "input": "1.23.4",
+    "invalid": true
+  },
+  {
+    "id": "MAN.04",
+    "input": "1e2",
+    "invalid": true
+  },
+  {
+    "id": "MAN.04",
+    "input": "NaN",
+    "invalid": true
+  },
+  {
+    "id": "MAN.04",
+    "input": "Infinity",
+    "invalid": true
+  },
+  {
+    "id": "MAN.04",
+    "input": "238,",
+    "invalid": true
+  },
+  {
+    "id": "MAN.04",
+    "input": "Não Aplic",
+    "invalid": true
+  },
+  {
+    "id": "MAN.07",
+    "input": "NA",
+    "formatted": "Não Aplicável",
+    "nok": false
+  },
+  {
+    "id": "MAN.07",
+    "input": "N/A",
+    "formatted": "Não Aplicável",
+    "nok": false
+  },
+  {
+    "id": "MAN.07",
+    "input": "Não Aplicavel",
+    "formatted": "Não Aplicável",
+    "nok": false
+  },
+  {
+    "id": "MAN.07",
+    "input": "Não Aplicável",
+    "formatted": "Não Aplicável",
+    "nok": false
+  },
+  {
+    "id": "MAN.07",
+    "input": "não aplicável",
+    "formatted": "Não Aplicável",
+    "nok": false
+  },
+  {
+    "id": "MAN.07",
+    "input": "",
+    "invalid": true
+  },
+  {
+    "id": "MAN.07",
+    "input": "-1",
+    "invalid": true
+  },
+  {
+    "id": "MAN.07",
+    "input": "1,234",
+    "invalid": true
+  },
+  {
+    "id": "MAN.07",
+    "input": "1.23.4",
+    "invalid": true
+  },
+  {
+    "id": "MAN.07",
+    "input": "1e2",
+    "invalid": true
+  },
+  {
+    "id": "MAN.07",
+    "input": "NaN",
+    "invalid": true
+  },
+  {
+    "id": "MAN.07",
+    "input": "Infinity",
+    "invalid": true
+  },
+  {
+    "id": "MAN.07",
+    "input": "238,",
+    "invalid": true
+  },
+  {
+    "id": "MAN.07",
+    "input": "Não Aplic",
+    "invalid": true
+  },
+  {
+    "id": "MAN.10",
+    "input": "NA",
+    "formatted": "Não Aplicável",
+    "nok": false
+  },
+  {
+    "id": "MAN.10",
+    "input": "N/A",
+    "formatted": "Não Aplicável",
+    "nok": false
+  },
+  {
+    "id": "MAN.10",
+    "input": "Não Aplicavel",
+    "formatted": "Não Aplicável",
+    "nok": false
+  },
+  {
+    "id": "MAN.10",
+    "input": "Não Aplicável",
+    "formatted": "Não Aplicável",
+    "nok": false
+  },
+  {
+    "id": "MAN.10",
+    "input": "não aplicável",
+    "formatted": "Não Aplicável",
+    "nok": false
+  },
+  {
+    "id": "MAN.10",
+    "input": "",
+    "invalid": true
+  },
+  {
+    "id": "MAN.10",
+    "input": "-1",
+    "invalid": true
+  },
+  {
+    "id": "MAN.10",
+    "input": "1,234",
+    "invalid": true
+  },
+  {
+    "id": "MAN.10",
+    "input": "1.23.4",
+    "invalid": true
+  },
+  {
+    "id": "MAN.10",
+    "input": "1e2",
+    "invalid": true
+  },
+  {
+    "id": "MAN.10",
+    "input": "NaN",
+    "invalid": true
+  },
+  {
+    "id": "MAN.10",
+    "input": "Infinity",
+    "invalid": true
+  },
+  {
+    "id": "MAN.10",
+    "input": "238,",
+    "invalid": true
+  },
+  {
+    "id": "MAN.10",
+    "input": "Não Aplic",
+    "invalid": true
+  },
+  {
+    "id": "MAN.18",
+    "input": "NA",
+    "formatted": "Não Aplicável",
+    "nok": false
+  },
+  {
+    "id": "MAN.18",
+    "input": "N/A",
+    "formatted": "Não Aplicável",
+    "nok": false
+  },
+  {
+    "id": "MAN.18",
+    "input": "Não Aplicavel",
+    "formatted": "Não Aplicável",
+    "nok": false
+  },
+  {
+    "id": "MAN.18",
+    "input": "Não Aplicável",
+    "formatted": "Não Aplicável",
+    "nok": false
+  },
+  {
+    "id": "MAN.18",
+    "input": "não aplicável",
+    "formatted": "Não Aplicável",
+    "nok": false
+  },
+  {
+    "id": "MAN.18",
+    "input": "",
+    "invalid": true
+  },
+  {
+    "id": "MAN.18",
+    "input": "-1",
+    "invalid": true
+  },
+  {
+    "id": "MAN.18",
+    "input": "1,234",
+    "invalid": true
+  },
+  {
+    "id": "MAN.18",
+    "input": "1.23.4",
+    "invalid": true
+  },
+  {
+    "id": "MAN.18",
+    "input": "1e2",
+    "invalid": true
+  },
+  {
+    "id": "MAN.18",
+    "input": "NaN",
+    "invalid": true
+  },
+  {
+    "id": "MAN.18",
+    "input": "Infinity",
+    "invalid": true
+  },
+  {
+    "id": "MAN.18",
+    "input": "238,",
+    "invalid": true
+  },
+  {
+    "id": "MAN.18",
+    "input": "Não Aplic",
+    "invalid": true
+  },
+  {
+    "id": "MAN.04",
+    "input": "1000",
+    "invalid": true
+  },
+  {
+    "id": "MAN.07",
+    "input": "1234 V",
+    "invalid": true
+  },
+  {
+    "id": "MAN.18",
+    "input": "100000",
+    "invalid": true
+  },
+  {
+    "id": "MAN.18",
+    "input": "4564,123 Ω",
+    "invalid": true
+  },
+  {
+    "id": "MAN.18",
+    "input": "OK",
+    "formatted": "OK",
+    "nok": false
+  },
+  {
+    "id": "MAN.18",
+    "input": "NOK",
+    "formatted": "NOK",
+    "nok": false
+  }
+]
