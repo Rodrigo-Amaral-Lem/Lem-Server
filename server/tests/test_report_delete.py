@@ -93,16 +93,23 @@ def test_only_admin_can_delete_closed_reports_and_others_drafts(setup):
     body = {
         "checklist_version": TEMPLATE["version"], "charger_id": charger["id"],
         "base_revision": 0,
-        "status": "closed",
+        "status": "draft",
         "payload": {"answers": answers()},
     }
     rid = str(uuid.uuid4())
     url = "/api/reports/" + rid
     assert c.put(url, headers=owner, json=body).status_code == 200
-    assert c.delete(url + "?base_revision=1", headers=owner).status_code == 403
-    assert c.delete(url + "?base_revision=1", headers=h).status_code == 200
-    assert c.delete(url + "?base_revision=1", headers=owner).status_code == 403
+    # Close a valid current report: MAN.12 needs a photograph even for N/A.
+    from test_rules_056 import photo
+    photo(c, owner, rid, "MAN.12")
+    body.update(status="closed", base_revision=1)
+    closed = c.put(url, headers=owner, json=body)
+    assert closed.status_code == 200, closed.text
+    revision = closed.json()["revision"]
+    assert c.delete(url + f"?base_revision={revision}", headers=owner).status_code == 403
+    assert c.delete(url + f"?base_revision={revision}", headers=h).status_code == 200
+    assert c.delete(url + f"?base_revision={revision}", headers=owner).status_code == 403
     rid = str(uuid.uuid4())
     url = "/api/reports/" + rid
-    assert c.put(url, headers=owner, json={**body, "status": "draft"}).status_code == 200
+    assert c.put(url, headers=owner, json={**body, "status": "draft", "base_revision": 0}).status_code == 200
     assert c.delete(url + "?base_revision=1", headers=h).status_code == 200
