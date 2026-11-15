@@ -1,7 +1,7 @@
 # LEM Server
 
 The FastAPI service for contracts, charger catalogues, maintenance reports and evidence. The current
-API/source version is **0.1.57** and the shared checklist is **6**.
+API/source version is **0.2.0** and the shared checklist is **6**.
 
 | Guide | Use it for |
 | --- | --- |
@@ -14,8 +14,8 @@ API/source version is **0.1.57** and the shared checklist is **6**.
 a versioned snapshot of `../Common/shared/`, so this repository can be deployed independently.
 `examples/` contains shipped demonstration output, not live customer records.
 
-Run local commands from `../ongoing_work/` and keep environments, test databases, logs and packages
-there. See the [workspace guide](../Common/docs/workspace.md) and
+Run local commands from this repository root. Use `.venv/` for Python and ignored `build/`
+subdirectories for development databases, test reports and deployment payloads. See the [workspace guide](../Common/docs/workspace.md) and
 [report contract](../Common/docs/report-contract.md) for cross-repository rules. Do not version
 production configuration, credentials, backups or build outputs.
 

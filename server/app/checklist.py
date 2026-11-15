@@ -77,6 +77,7 @@ def for_charger(template, details):
                 kind="status",
                 photo_required=prototype.get("photo_required", False),
                 na_notes_required=prototype.get("na_notes_required", False),
+                na_notes_default=prototype.get("na_notes_default", ""),
             )
         )
     for section in source["sections"]:
@@ -94,24 +95,85 @@ def corrected_draft_template(template, status):
         return template
     result = deepcopy(template)
     for section in result["sections"]:
+        if section["id"] == "SITE":
+            section["title"] = "SITE - Posto de carregamento"
         for item in section["items"]:
             if item["id"] in ("MAN.12", "MAN.18"):
                 item["reading_required"] = True
             if item["id"] == "MAN.12":
-                item.update(photo_required=True, photo_always=True)
+                item.update(photo_required=True, photo_always=False)
+            if item["id"] == "SEG.01":
+                item["na_notes_required"] = True
+            if item["id"] == "MAN.02":
+                item.update(kind="status", na_notes_required=False)
             if item["id"] == "MAN.19":
                 item["kind"] = "status"
+    current_rules = {'SITE.01': {'label': 'Verifique a limpeza geral do posto de carregamento'},
+     'SITE.05': {'label': 'Verifique possíveis sinais de vandalismo (cabos cortados, fechadura forçada, carregador danificado, etc.)'},
+     'SITE.02': {'na_notes_required': True, 'na_notes_default': 'Sem sinalização horizontal'},
+     'SITE.03': {'na_notes_required': True, 'na_notes_default': 'Sem sinalética vertical'},
+     'SITE.04': {'na_notes_required': True, 'na_notes_default': 'Sem proteção mecânica'},
+     'QVE.02': {'na_notes_required': True,
+                'na_notes_default': 'Não testado devido a veículo em carga',
+                'label': 'Botoneira de emergência - Verifique o correto funcionamento'},
+     'QVE.04': {'na_notes_required': True},
+     'QVE.09': {'na_notes_required': True,
+                'na_notes_default': 'Apertos não verificados devido a veículo em carga'},
+     'QVE.10': {'na_notes_required': True, 'na_notes_default': 'QVE sem sinalética'},
+     'QVE.11': {'na_notes_required': True, 'na_notes_default': 'Não testado devido a veículo em carga'},
+     'QVE.12': {'na_notes_required': True, 'na_notes_default': 'Não testado devido a veículo em carga'},
+     'EST.01': {'na_notes_required': True},
+     'EST.16': {'na_notes_required': True},
+     'EST.17': {'na_notes_required': True},
+     'MAN.12': {'na_notes_required': True,
+                'na_notes_default': 'Não testado devido a veículo em carga',
+                'photo_always': False},
+     'MAN.13': {'na_notes_required': True, 'na_notes_default': 'Não testado devido a veículo em carga'},
+     'MAN.18': {'na_notes_required': True},
+     'MAN.20': {'na_notes_required': True,
+                'na_notes_default': 'Apertos não verificados devido a veículo em carga'},
+     'MAN.02': {'na_notes_required': False},
+     'FIN.03': {'kind': 'notes', 'optional': True, 'label': 'Observações gerais finais'},
+     'FIN.02': {'signature_required': True, 'media_disabled': True, 'notes_visible': True},
+     'QVE.01': {'label': 'Botoneira de emergência - Verifique integridade'},
+     'QVE.03': {'na_notes_default': 'Botoneira sem dupla sinalização', 'label': 'Botoneira de emergência - Verifique a dupla sinalização'}}
+    for section in result["sections"]:
+        for item in section["items"]:
+            item.update(current_rules.get(item["id"], {}))
+            if item["id"] in ("MAN.11", "MAN.12"):
+                item["label"] = item["label"].replace("corrente", "intensidade")
+            if item["id"].startswith("CARG.01."):
+                item["na_notes_default"] = "Veículo usado não compatível"
     order = ['SEG','SITE','QVE','EST','MAN','CARG','FIN']
     result['sections'].sort(key=lambda s: order.index(s['id']) if s['id'] in order else len(order))
     for section in result['sections']:
         if section['id'] == 'SEG':
             for item in section['items']:
                 if item['id'] in {f'SEG.{n:02d}' for n in range(2,7)}:
-                    item.update(notes_disabled=True, media_disabled=True)
+                    item.pop("notes_disabled", None)
+                    item.update(notes_button_hidden=True, media_disabled=True)
+                    if item["id"] in ("SEG.02", "SEG.04"):
+                        item["na_notes_required"] = True
             if not any(i['id']=='SEG.07' for i in section['items']):
                 section['items'].append(dict(id='SEG.07',label='Observações gerais de segurança',kind='notes',photo_required=False,optional=True))
-    for group, key, label in [('QVE','QVE.14','QVE - Observações gerais'), ('MAN','MAN.21','Observações gerais da manutenção')]:
+    for group, key, label in [('CARG','CARG.07','Observações gerais dos ensaios de carregamento'), ('EST','EST.18','Observações gerais do equipamento'), ('SITE','SITE.06','Observações gerais do local'), ('QVE','QVE.14','QVE - Observações gerais'), ('MAN','MAN.21','Observações gerais da manutenção')]:
         for section in result['sections']:
             if section['id']==group and not any(i['id']==key for i in section['items']):
                 section['items'].append(dict(id=key,label=label,kind='notes',photo_required=False,optional=True))
+    return result
+
+
+def corrected_draft_payload(payload, template, status):
+    """Move legacy FIN.03 text into notes without changing closed history."""
+    if status != "draft" or template.get("version") != 6:
+        return payload
+    answer = payload.get("answers", {}).get("FIN.03", {})
+    value = answer.get("value", "")
+    if not value:
+        return payload
+    result = deepcopy(payload)
+    answer = result["answers"]["FIN.03"]
+    notes = answer.get("notes", "")
+    answer["notes"] = value if not notes or notes == value else value + "\n" + notes
+    answer["value"] = ""
     return result

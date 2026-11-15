@@ -28,3 +28,20 @@ AGENTS.override.md
 *.agent-notes.txt
 *.agent-handoff.md
 *.agent-handoff.txt
+
+# Local agent work and disposable analysis; maintained tools/tests/docs stay tracked.
+.codex/
+ongoing_work/
+
+# Python tooling caches and local test reports.
+.ruff_cache/
+.mypy_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+
+# Generated Python distribution metadata and packages.
+*.egg-info/
+/dist/

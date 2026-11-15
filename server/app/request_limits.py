@@ -16,7 +16,7 @@ class RequestBodyLimit:
             return await self.app(scope, receive, send)
         headers = dict(scope.get("headers", []))
         multipart = headers.get(b"content-type", b"").lower().startswith(b"multipart/form-data")
-        limit = 21 * 1024 * 1024 if multipart else 512 * 1024
+        limit = 61 * 1024 * 1024 if multipart else 512 * 1024
         if scope.get("path") == "/api/login":
             limit = 4096
         length = headers.get(b"content-length")

@@ -66,7 +66,7 @@ def test_pdf_preserves_reading_and_assessment(setup):
     assert '600,5' in text and '· OK' in text
 
 @pytest.mark.parametrize('value',['','OK','NOK','NA','30 mA'])
-def test_trip_reading_and_photo_always_required(setup,value):
+def test_trip_reading_and_photo_required_when_applicable(setup,value):
     from app.models import Photo
     c,h,rid,body=report(setup)
     body['payload']['answers']['MAN.12']={'value':value,'notes':'Teste efetuado'}
@@ -74,7 +74,9 @@ def test_trip_reading_and_photo_always_required(setup,value):
         for p in db.query(Photo).filter_by(report_id=rid,checkpoint='MAN.12').all(): db.delete(p)
         db.commit()
     response=c.put('/api/reports/'+rid,headers=h,json=body)
-    assert response.status_code==422 and 'fotografia' in response.text,response.text
+    assert response.status_code==(200 if value=='NA' else 422),response.text
+    if value=='NA': return
+    assert 'fotografia' in response.text,response.text
     photo(c,h,rid,'MAN.12')
     response=c.put('/api/reports/'+rid,headers=h,json=body)
     assert response.status_code==(422 if value in ('','OK','NOK') else 200),response.text
@@ -96,9 +98,36 @@ def test_existing_v6_draft_receives_corrections_but_closed_history_is_frozen():
                 item.pop('photo_always',None)
                 item['photo_required']=False
             if item['id']=='MAN.19': item['kind']='text'
+            if item['id']=='SEG.01': item.pop('na_notes_required', None)
     corrected=corrected_draft_template(old,'draft')
     items={i['id']:i for s in corrected['sections'] for i in s['items']}
-    assert items['MAN.12']['photo_always'] and items['MAN.12']['reading_required']
+    assert items['SEG.01']['na_notes_required']
+    assert not items['MAN.12']['photo_always'] and items['MAN.12']['reading_required']
     assert items['MAN.18']['reading_required'] and items['MAN.19']['kind']=='status'
     assert corrected_draft_template(old,'closed')==old
     assert corrected_draft_template(old,'closed')!=corrected
+
+@pytest.mark.parametrize('value,notes,expected', [('OK','',200),('NOK','',422),('NA',' ',200),('NOK','Limpeza incompleta',200),('NA','Não aplicável ao equipamento',200)])
+def test_man02_status_requires_reason(setup,value,notes,expected):
+    c,h,rid,body=report(setup)
+    body['payload']['answers']['MAN.02']={'value':value,'notes':notes}
+    response=c.put('/api/reports/'+rid,headers=h,json=body)
+    assert response.status_code==expected,response.text
+    if expected==422: assert 'MAN.02' in response.text and 'observação' in response.text
+
+
+def test_est18_and_man02_existing_draft_correction():
+    from app.checklist import corrected_draft_template
+    old=copy.deepcopy(TEMPLATE)
+    for section in old['sections']:
+        section['items']=[i for i in section['items'] if i['id']!='EST.18']
+        for item in section['items']:
+            if item['id']=='MAN.02':
+                item['kind']='text'
+                item.pop('na_notes_required',None)
+    fixed=corrected_draft_template(old,'draft')
+    items={i['id']:i for s in fixed['sections'] for i in s['items']}
+    assert items['MAN.02']['kind']=='status' and not items['MAN.02']['na_notes_required']
+    assert items['EST.18']['kind']=='notes' and items['EST.18']['optional']
+    assert corrected_draft_template(fixed,'draft')==fixed
+    assert corrected_draft_template(old,'closed')==old

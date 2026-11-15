@@ -1,7 +1,7 @@
 # Test the API and deployment tools
 
-Run from `ongoing_work`. Use an isolated Python environment, fictitious records and disposable
-databases. Never point test runners at production.
+Run from the **Server repository root**. Use an isolated `.venv/`, fictitious records and
+disposable databases under ignored `build/`. Never point test runners at production.
 
 ## Dependencies and baseline command
 
@@ -9,15 +9,15 @@ Install [server/requirements.txt](../server/requirements.txt) plus `pytest`, `ht
 Video tests need `ffprobe` on PATH. Set `PYTHONPATH` to the absolute `Server/server` directory:
 
 ```powershell
-$env:PYTHONPATH = (Resolve-Path ../Server/server).Path
-python -m pytest ../Server/server/tests ../Server/deploy/tests -q -rs `
-  --basetemp="$PWD/server-tests-temp" -o "cache_dir=$PWD/server-pytest-cache"
+$env:PYTHONPATH = (Resolve-Path server).Path
+python -m pytest server/tests deploy/tests -q -rs `
+  --basetemp="$PWD/build/test-temp" -o "cache_dir=$PWD/build/pytest-cache"
 ```
 
 Use a dedicated disposable `--basetemp`: pytest can clear that directory. An **absolute**
 `cache_dir` prevents pytest from interpreting a relative value beneath its repository root. Put
-interpreter/OS temporary paths in `ongoing_work` too when working in a restricted Windows
-environment.
+other test reports and temporary outputs under `build/` too. Create that directory before
+configuring any custom OS temporary paths.
 
 ## What the suites cover
 
@@ -42,10 +42,10 @@ deployment or a demonstration that production data is compatible.
 ## Focused checks
 
 ```powershell
-python -m pytest ../Server/server/tests/test_general_notes.py `
-  ../Server/server/tests/test_rules_057.py `
-  ../Server/server/tests/test_safety_layout.py -q `
-  --basetemp="$PWD/rules-test-temp" -o "cache_dir=$PWD/server-pytest-cache"
+python -m pytest server/tests/test_general_notes.py `
+  server/tests/test_rules_057.py `
+  server/tests/test_safety_layout.py -q `
+  --basetemp="$PWD/build/rules-test-temp" -o "cache_dir=$PWD/build/pytest-cache"
 ```
 
 Run CLI tests against a disposable database before changing account/ownership logic. Run
@@ -56,10 +56,10 @@ destructive update/reset/uninstall commands as a way to test documentation examp
 
 Some older workflow tests can write a demonstration PDF into `examples/`. Check Git status after
 testing and restore/review that generated sample before staging an unrelated change. Workstation
-payloads created by `-PackageOnly` /`--package-only` also belong under `ongoing_work`.
+payloads created by `-PackageOnly` / `--package-only` belong under ignored `build/packages/`.
 
-Keep command transcripts, HTML/JSON test reports, screenshots and detailed audits outside the
-product repositories. A maintained guide should state a test's purpose, entry point and
+Keep command transcripts, HTML/JSON test reports, screenshots and detailed audits in an ignored
+directory such as `build/test-reports/`. A maintained guide should state a test's purpose, entry point and
 prerequisites; individual dated test runs are evidence, not new documentation versions.
 
 For client/native integration, use the [App test guide](../../App/docs/testing.md). Shared

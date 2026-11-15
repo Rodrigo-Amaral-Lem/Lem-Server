@@ -1,7 +1,7 @@
 # Deployment tool reference
 
-These scripts ship with the server payload. Workstation commands are normally run from
-`ongoing_work` using `../Server/deploy/...`; host commands run in the chosen installation. Full
+These scripts ship with the server payload. Run workstation commands from the **Server repository
+root** using `deploy/...`; host commands run from the chosen installation root with the same layout. Full
 source-checkout guidance is in [Deployment](../docs/deployment.md) and
 [Administration](../docs/administration.md).
 

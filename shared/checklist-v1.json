@@ -11,47 +11,50 @@
           "id": "SEG.01",
           "label": "Área delimitada de segurança.",
           "kind": "status",
-          "photo_required": true
+          "photo_required": true,
+          "na_notes_required": true
         },
         {
           "id": "SEG.02",
           "label": "Tem os EPIs necessários para realizar o serviço?",
           "kind": "status",
           "photo_required": false,
-          "notes_disabled": true,
-          "media_disabled": true
+          "media_disabled": true,
+          "notes_button_hidden": true,
+          "na_notes_required": true
         },
         {
           "id": "SEG.03",
           "label": "Os EPIs estão em bom estado e dentro da validade?",
           "kind": "status",
           "photo_required": false,
-          "notes_disabled": true,
-          "media_disabled": true
+          "media_disabled": true,
+          "notes_button_hidden": true
         },
         {
           "id": "SEG.04",
           "label": "Tem ferramentas manuais isoladas, multímetro e analisador de multifunções?",
           "kind": "status",
           "photo_required": false,
-          "notes_disabled": true,
-          "media_disabled": true
+          "media_disabled": true,
+          "notes_button_hidden": true,
+          "na_notes_required": true
         },
         {
           "id": "SEG.05",
           "label": "Tem os elementos para aplicar o procedimento Lockout/Tagout?",
           "kind": "status",
           "photo_required": false,
-          "notes_disabled": true,
-          "media_disabled": true
+          "media_disabled": true,
+          "notes_button_hidden": true
         },
         {
           "id": "SEG.06",
           "label": "Tem condições de trabalho adequadas para realizar o serviço em segurança (chuva, vento, visibilidade, etc...)?",
           "kind": "status",
           "photo_required": false,
-          "notes_disabled": true,
-          "media_disabled": true
+          "media_disabled": true,
+          "notes_button_hidden": true
         },
         {
           "id": "SEG.07",
@@ -64,11 +67,11 @@
     },
     {
       "id": "SITE",
-      "title": "SITE - Site",
+      "title": "SITE - Posto de carregamento",
       "items": [
         {
           "id": "SITE.01",
-          "label": "SITE - Verifique a limpeza geral",
+          "label": "Verifique a limpeza geral do posto de carregamento",
           "kind": "status",
           "photo_required": false
         },
@@ -76,25 +79,38 @@
           "id": "SITE.02",
           "label": "Verifique o estado da pintura / sinalização horizontal",
           "kind": "status",
-          "photo_required": true
+          "photo_required": true,
+          "na_notes_required": true,
+          "na_notes_default": "Sem sinalização horizontal"
         },
         {
           "id": "SITE.03",
           "label": "Verifique o estado da sinalética vertical (carregamento VE e números de lugares)",
           "kind": "status",
-          "photo_required": true
+          "photo_required": true,
+          "na_notes_required": true,
+          "na_notes_default": "Sem sinalética vertical"
         },
         {
           "id": "SITE.04",
           "label": "Verifique o estado da proteção mecânica (apertos, retrorrefletores, estado geral)",
           "kind": "status",
-          "photo_required": true
+          "photo_required": true,
+          "na_notes_required": true,
+          "na_notes_default": "Sem proteção mecânica"
         },
         {
           "id": "SITE.05",
-          "label": "SITE - Verifique possíveis sinais de vandalismo (cabos cortados, fechadura forçada, carregador danificado, etc.)",
+          "label": "Verifique possíveis sinais de vandalismo (cabos cortados, fechadura forçada, carregador danificado, etc.)",
           "kind": "status",
           "photo_required": false
+        },
+        {
+          "id": "SITE.06",
+          "label": "Observações gerais do local",
+          "kind": "notes",
+          "photo_required": false,
+          "optional": true
         }
       ]
     },
@@ -104,27 +120,31 @@
       "items": [
         {
           "id": "QVE.01",
-          "label": "Botão de emergência - Verifique integridade",
+          "label": "Botoneira de emergência - Verifique integridade",
           "kind": "status",
           "photo_required": true
         },
         {
           "id": "QVE.02",
-          "label": "Botão de emergência - Verifique o correto funcionamento",
+          "label": "Botoneira de emergência - Verifique o correto funcionamento",
           "kind": "status",
-          "photo_required": false
+          "photo_required": false,
+          "na_notes_required": true,
+          "na_notes_default": "Não testado devido a veículo em carga"
         },
         {
           "id": "QVE.03",
-          "label": "Botão de emergência - Verifique a dupla sinalização",
+          "label": "Botoneira de emergência - Verifique a dupla sinalização",
           "kind": "status",
-          "photo_required": false
+          "photo_required": false,
+          "na_notes_default": "Botoneira sem dupla sinalização"
         },
         {
           "id": "QVE.04",
           "label": "QVE - Fotografias (QVE aberto sem espelhos)",
           "kind": "status",
-          "photo_required": true
+          "photo_required": true,
+          "na_notes_required": true
         },
         {
           "id": "QVE.05",
@@ -154,25 +174,33 @@
           "id": "QVE.09",
           "label": "QVE - Verifique apertos",
           "kind": "status",
-          "photo_required": false
+          "photo_required": false,
+          "na_notes_required": true,
+          "na_notes_default": "Apertos não verificados devido a veículo em carga"
         },
         {
           "id": "QVE.10",
           "label": "QVE - Verifique sinalética QVE (quadro elétrico e corte geral)",
           "kind": "status",
-          "photo_required": false
+          "photo_required": false,
+          "na_notes_required": true,
+          "na_notes_default": "QVE sem sinalética"
         },
         {
           "id": "QVE.11",
           "label": "Teste o correto funcionamento do interruptor geral",
           "kind": "status",
-          "photo_required": false
+          "photo_required": false,
+          "na_notes_required": true,
+          "na_notes_default": "Não testado devido a veículo em carga"
         },
         {
           "id": "QVE.12",
           "label": "Teste o correto funcionamento do(s) disjuntor(es)",
           "kind": "status",
-          "photo_required": false
+          "photo_required": false,
+          "na_notes_required": true,
+          "na_notes_default": "Não testado devido a veículo em carga"
         },
         {
           "id": "QVE.13",
@@ -197,7 +225,8 @@
           "id": "EST.01",
           "label": "Fotografias interior e exterior do carregador antes da tarefa executada (visualizar todos os componentes internos e externos)",
           "kind": "status",
-          "photo_required": true
+          "photo_required": true,
+          "na_notes_required": true
         },
         {
           "id": "EST.02",
@@ -287,13 +316,22 @@
           "id": "EST.16",
           "label": "Verifique se os autocolantes DGEG e apoio ao cliente estão visíveis e em boas condições",
           "kind": "status",
-          "photo_required": true
+          "photo_required": true,
+          "na_notes_required": true
         },
         {
           "id": "EST.17",
           "label": "Verifique se todo o hardware da estação de carregamento está a funcionar corretamente",
           "kind": "status",
-          "photo_required": false
+          "photo_required": false,
+          "na_notes_required": true
+        },
+        {
+          "id": "EST.18",
+          "label": "Observações gerais do equipamento",
+          "kind": "notes",
+          "photo_required": false,
+          "optional": true
         }
       ]
     },
@@ -310,8 +348,9 @@
         {
           "id": "MAN.02",
           "label": "Limpeza dos módulos de potência",
-          "kind": "text",
-          "photo_required": false
+          "kind": "status",
+          "photo_required": false,
+          "na_notes_required": false
         },
         {
           "id": "MAN.03",
@@ -363,24 +402,28 @@
         },
         {
           "id": "MAN.11",
-          "label": "Proteção diferencial QVE e Carregador - Indicar a corrente de disparo configurada",
+          "label": "Proteção diferencial QVE e Carregador - Indicar a intensidade de disparo configurada",
           "kind": "text",
           "photo_required": false
         },
         {
           "id": "MAN.12",
-          "label": "Proteção diferencial QVE e Carregador - Indique o valor da corrente de disparo com testador",
+          "label": "Proteção diferencial QVE e Carregador - Indique o valor da intensidade de disparo com testador",
           "kind": "text",
           "photo_required": true,
           "allow_status": true,
           "reading_required": true,
-          "photo_always": true
+          "photo_always": false,
+          "na_notes_required": true,
+          "na_notes_default": "Não testado devido a veículo em carga"
         },
         {
           "id": "MAN.13",
           "label": "Proteção diferencial QVE e Carregador - Teste manual do dispositivo",
           "kind": "status",
-          "photo_required": false
+          "photo_required": false,
+          "na_notes_required": true,
+          "na_notes_default": "Não testado devido a veículo em carga"
         },
         {
           "id": "MAN.14",
@@ -420,7 +463,8 @@
           "kind": "text",
           "photo_required": false,
           "allow_status": true,
-          "reading_required": true
+          "reading_required": true,
+          "na_notes_required": true
         },
         {
           "id": "MAN.19",
@@ -432,7 +476,9 @@
           "id": "MAN.20",
           "label": "Verifique todos os apertos do carregador (fontes de alimentação, disjuntores diferenciais, disjuntores, contadores, placas de hardware, etc.)",
           "kind": "status",
-          "photo_required": false
+          "photo_required": false,
+          "na_notes_required": true,
+          "na_notes_default": "Apertos não verificados devido a veículo em carga"
         },
         {
           "id": "MAN.21",
@@ -452,7 +498,8 @@
           "label": "Teste de carga do conector tipo não indicado",
           "kind": "status",
           "photo_required": true,
-          "na_notes_required": true
+          "na_notes_required": true,
+          "na_notes_default": "Veículo usado não compatível"
         },
         {
           "id": "CARG.04",
@@ -472,6 +519,13 @@
           "label": "Verifique o funcionamento das luzes e ventiladores",
           "kind": "status",
           "photo_required": false
+        },
+        {
+          "id": "CARG.07",
+          "label": "Observações gerais dos ensaios de carregamento",
+          "kind": "notes",
+          "photo_required": false,
+          "optional": true
         }
       ]
     },
@@ -490,13 +544,17 @@
           "label": "Nome e assinatura do técnico",
           "kind": "text",
           "photo_required": false,
-          "supports_signature": true
+          "supports_signature": true,
+          "signature_required": true,
+          "media_disabled": true,
+          "notes_visible": true
         },
         {
           "id": "FIN.03",
-          "label": "Observações",
-          "kind": "text",
-          "photo_required": false
+          "label": "Observações gerais finais",
+          "kind": "notes",
+          "photo_required": false,
+          "optional": true
         }
       ]
     }

@@ -11,8 +11,8 @@ import os
 import re
 from urllib.parse import urlparse
 
-VERSION = "0.1.57"
-MINIMUM_CLIENT = "0.1.57"
+VERSION = "0.2.0"
+MINIMUM_CLIENT = "0.2.0"
 HEADER = "X-Lem-Client-Version"
 
 

@@ -19,3 +19,14 @@ examples
 **/*.sqlite*
 **/*.pem
 **/*.key
+
+# Local agent instructions, notes and tooling caches are not server inputs.
+**/AGENTS.md
+**/AGENTS.override.md
+**/.agents
+**/.codex
+**/.agent-notes
+**/.agent-handoffs
+**/ongoing_work
+**/.ruff_cache
+**/.mypy_cache

@@ -1,7 +1,8 @@
 # Development and deployment
 
-Run workstation commands from `ongoing_work`. Commands explicitly labelled **on the server** run in
-the selected remote installation. Read [administration](administration.md) before operations
+Run workstation commands from the **Server repository root**, which contains `server/`,
+`shared/` and `deploy/`. Commands labelled **on the server** run from the selected installation
+root, which has the same layout. Read [administration](administration.md) before operations
 affecting live data.
 
 ## Local development
@@ -10,23 +11,25 @@ Use Python 3.12 (the container's runtime), a virtual environment and
 [server/requirements.txt](../server/requirements.txt). `ffprobe` from FFmpeg is required for video
 validation.
 
-Example in PowerShell 7.1+, from `ongoing_work`:
+Example in PowerShell 7.1+, from the Server repository root:
 
 ```powershell
-python -m venv server-venv
-& ./server-venv/Scripts/Activate.ps1
-python -m pip install -r ../Server/server/requirements.txt
-$env:DATABASE_URL = 'sqlite:///./lem-development.db'
+python -m venv .venv
+& ./.venv/Scripts/Activate.ps1
+python -m pip install -r server/requirements.txt
+New-Item -ItemType Directory -Force build | Out-Null
+$env:DATABASE_URL = 'sqlite:///./build/lem-development.db'
 $env:ADMIN_EMAIL = 'admin@example.test'
 $env:ADMIN_NAME = 'Local administrator'
 $env:ADMIN_PASSWORD = Read-Host 'Initial administrator password (12+ characters)' -MaskInput
 $env:LEM_API_DOCS = '1'
-python -m uvicorn run:app --app-dir ../Server/server --host 127.0.0.1 --port 8000
+python -m uvicorn run:app --app-dir server --host 127.0.0.1 --port 8000
 ```
 
 The first account is created only when bootstrapping an empty users table. Changing `ADMIN_PASSWORD`
 later does not reset an existing account; use the administration CLI. The SQLite file above is
-relative to the current working directory, which is why this example starts in `ongoing_work`.
+relative to the repository root and stored under ignored `build/`. Reuse that same `DATABASE_URL`
+when running local administration commands.
 
 The normal client/server configuration uses HTTPS. The command above starts a loopback development
 API, not a production endpoint. API documentation is public when enabled; leave it disabled in
@@ -44,7 +47,7 @@ runs the API as user `lem`.
 | `LEM_DOMAIN` | Proxy hostname; default `lem.rodrod.pt` |
 | `POSTGRES_PASSWORD` | Required database password; installer generates URL-safe hex |
 | `ADMIN_EMAIL`, `ADMIN_NAME`, `ADMIN_PASSWORD` | Initial account only; password must have at least 12 characters |
-| `LEM_MIN_CLIENT_VERSION`, `LEM_LATEST_CLIENT_VERSION` | Admitted semantic-version interval; defaults are both `0.1.57` |
+| `LEM_MIN_CLIENT_VERSION`, `LEM_LATEST_CLIENT_VERSION` | Admitted semantic-version interval; defaults are both `0.2.0` |
 | `LEM_UPDATE_URL` | Optional HTTPS update/download instructions URL |
 | `LEM_EXPORT_CONCURRENCY`, `LEM_IMAGE_CONCURRENCY` | API admission slots; defaults 2/1, capped at 4/2 |
 | `LEM_API_DOCS` | `1` enables public documentation/schema routes; default off |
@@ -83,12 +86,12 @@ actual replacement to the remote helpers. They retain configured secrets and HTT
 default. Use an explicit host/path when working with more than one installation.
 
 ```powershell
-& ../Server/deploy/deploy.ps1 -ServerHost lem.rodrod.pt -UserName lem `
+& ./deploy/deploy.ps1 -ServerHost lem.rodrod.pt -UserName lem `
   -RemotePath /home/lem/apps/Lem -Domain lem.rodrod.pt
 ```
 
 ```bash
-bash ../Server/deploy/deploy.sh --host lem.rodrod.pt --user lem \
+bash deploy/deploy.sh --host lem.rodrod.pt --user lem \
   --remote-path /home/lem/apps/Lem --domain lem.rodrod.pt
 ```
 
@@ -112,7 +115,8 @@ managed files and checks health. Failures can leave a partially completed deploy
 and recovery state; do not assume transactional rollback.
 
 `--package-only` is a transport/test feature, not a return to ZIP-based source control. If a payload
-is needed, place it under `ongoing_work`, not the workspace root or Git repositories.
+is needed, create an ignored `build/packages/` directory first and pass a destination such as
+`build/packages/deployment.zip` to `-PackageOnly` / `--package-only`. Do not commit payloads.
 
 ## Tool catalogue and diagnosis
 
@@ -121,8 +125,11 @@ side effects. For account commands, backup/restore, station imports and installa
 [Administration](administration.md). For local payload tests without a remote host, use
 [Testing](testing.md).
 
-On the installed host, `cd deploy` and inspect `docker compose ps` and
-`docker compose logs --tail=80 api proxy` (with sudo where required). Check DNS A/AAAA records,
+On the installed host, from its installation root, inspect
+`docker compose --env-file deploy/.env -f deploy/compose.yml ps` and
+`docker compose --env-file deploy/.env -f deploy/compose.yml logs --tail=80 api proxy`
+(with sudo where required). Check DNS A/AAAA records,
 domain, preserved `.env`, SSH identity and service health before repeating an interrupted
 deployment. Avoid printing a fully expanded Compose configuration containing secrets;
-`docker compose config --quiet` validates without displaying it.
+`docker compose --env-file deploy/.env -f deploy/compose.yml config --quiet` validates without
+displaying it.

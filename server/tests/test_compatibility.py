@@ -85,11 +85,11 @@ def test_shipped_policy_accepts_current_app(monkeypatch):
     monkeypatch.delenv("LEM_LATEST_CLIENT_VERSION", raising=False)
     monkeypatch.delenv("LEM_UPDATE_URL", raising=False)
     policy = ClientPolicy()
-    assert policy.minimum == "0.1.57"
-    assert policy.latest == "0.1.57"
-    assert policy.evaluate("0.1.57")["compatible"]
-    assert not policy.evaluate("0.1.57")["update_available"]
-    for version in ["0.1.38", "0.1.48", "0.1.51", "0.1.55", "0.1.58"]:
+    assert policy.minimum == "0.2.0"
+    assert policy.latest == "0.2.0"
+    assert policy.evaluate("0.2.0")["compatible"]
+    assert not policy.evaluate("0.2.0")["update_available"]
+    for version in ["0.1.38", "0.1.48", "0.1.51", "0.1.55", "0.1.57", "0.1.58", "0.2.1"]:
         assert not policy.evaluate(version)["compatible"]
 
 
@@ -99,7 +99,7 @@ def test_shipped_policy_allows_current_login(tmp_path, monkeypatch):
     monkeypatch.delenv("LEM_LATEST_CLIENT_VERSION", raising=False)
     monkeypatch.delenv("LEM_UPDATE_URL", raising=False)
     app = create_app("sqlite:///" + str(tmp_path / "release.db"))
-    with TestClient(app, headers={"X-Lem-Client-Version": "0.1.57"}) as client:
+    with TestClient(app, headers={"X-Lem-Client-Version": "0.2.0"}) as client:
         assert client.get("/api/client-compatibility").json()["compatible"]
         result = client.post("/api/login", json={
             "email": "admin@lem.pt", "password": "CompatibilityPassword123!"})

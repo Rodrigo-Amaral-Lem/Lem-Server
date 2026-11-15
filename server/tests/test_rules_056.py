@@ -22,6 +22,9 @@ def report(setup):
     r=c.put('/api/reports/'+rid,headers=h,json=body)
     assert r.status_code==200,r.text
     photo(c,h,rid,'MAN.12')
+    pid=photo(c,h,rid,'FIN.02')
+    body['payload']['answers']['FIN.02']={'value':'Técnico de teste','notes':''}
+    body['payload']['signatures']={'FIN.02':{'photo_id':pid,'signed_by':'Técnico de teste','signed_at':'2026-11-15T10:00:00Z'}}
     body['base_revision']=r.json()['revision'];body['status']='closed'
     return c,h,rid,body
 
@@ -30,9 +33,11 @@ def photo(c,h,rid,key,video=False):
     if video:data=(Path(__file__).with_name('fixtures')/'evidence-clip.mp4').read_bytes();name='test.mp4';mime='video/mp4'
     else:
         b=BytesIO();Image.new('RGB',(40,30),'cyan').save(b,format='PNG');data=b.getvalue();name='test.png';mime='image/png'
-    r=c.put(f'/api/reports/{rid}/photos/{uuid.uuid4()}',headers=h,
+    pid=str(uuid.uuid4())
+    r=c.put(f'/api/reports/{rid}/photos/{pid}',headers=h,
         data={'checkpoint':key,'base_revision':'1'},files={'file':(name,data,mime)})
     assert r.status_code==200,r.text
+    return pid
 
 
 def test_generated_connector_rules_are_inherited_for_every_connector():
@@ -46,7 +51,7 @@ def test_generated_connector_rules_are_inherited_for_every_connector():
     assert labels['CARG.05']['label']=='Verifique o correto funcionamento dos meters no carregador - tire fotografias'
 
 
-@pytest.mark.parametrize('key',['CARG.01.01','CARG.05'])
+@pytest.mark.parametrize('key',['SEG.01','CARG.01.01','CARG.05'])
 def test_na_requires_a_reason_but_no_photo(setup,key):
     c,h,rid,body=report(setup)
     body['payload']['answers'][key]={'value':'NA','notes':''}
@@ -57,7 +62,7 @@ def test_na_requires_a_reason_but_no_photo(setup,key):
     assert r.status_code==200,r.text
 
 
-@pytest.mark.parametrize('key',['CARG.01.01','CARG.05'])
+@pytest.mark.parametrize('key',['SEG.01','CARG.01.01','CARG.05'])
 def test_ok_requires_an_actual_photo(setup,key):
     c,h,rid,body=report(setup)
     body['payload']['answers'][key]={'value':'OK','notes':''}

@@ -46,7 +46,7 @@ from .compatibility import ClientPolicy, VERSION
 from .importer import analyse, parse
 from .images import InvalidImage
 from .media import inspect_evidence
-from .checklist import for_charger, corrected_draft_template
+from .checklist import for_charger, corrected_draft_template, corrected_draft_payload
 from .measurements import digits as measurement_digits, format_value, not_applicable
 from .exports import write_bundle, file_chunks, MissingEvidence
 from .contract_trash import RETENTION, utc_now, purge_expired
@@ -321,7 +321,7 @@ def create_app(url=None, bootstrap=True):
             "technician": owner.name if owner and owner.role in ("admin", "tech") else "Sem proprietário",
             "revision": r.revision,
             "status": r.status,
-            "payload": r.payload,
+            "payload": corrected_draft_payload(r.payload, r.template, r.status),
             "snapshot": r.snapshot,
             "template": corrected_draft_template(r.template, r.status),
             "started": r.started,
@@ -562,7 +562,7 @@ def create_app(url=None, bootstrap=True):
     def file_bytes(file, limit=20 * 1024 * 1024):
         data = file.file.read(limit + 1)
         if len(data) > limit:
-            raise HTTPException(413, "Máximo 20 MB por ficheiro")
+            raise HTTPException(413, f"Máximo {limit // (1024 * 1024)} MiB por ficheiro")
         return data
 
     @app.post("/api/imports/analyse")
@@ -757,19 +757,27 @@ def create_app(url=None, bootstrap=True):
         answers = body.payload.get("answers", {})
         if not isinstance(answers, dict) or any(k not in items for k in answers):
             raise HTTPException(422, "Resposta/checkpoint inválido")
+        # Compatibility with clients that inserted null for untouched optional fields.
+        # Required answers and non-null invalid data still undergo strict validation.
+        answers = {key: a for key, a in answers.items()
+                   if a is not None or not items[key].get("optional")}
+        if "answers" in body.payload:
+            body.payload["answers"] = answers
         for key, a in answers.items():
             if (
                 not isinstance(a, dict)
                 or not isinstance(a.get("value", ""), str)
                 or not isinstance(a.get("notes", ""), str)
             ):
-                raise HTTPException(422, "Resposta deve ter texto e observações")
+                raise HTTPException(422, key + ": resposta deve ter texto e observações")
             if len(a.get("value", "")) > 8000 or len(a.get("notes", "")) > 8000:
                 raise HTTPException(422, "Texto demasiado longo")
             if "assessment" in a and (not items[key].get("reading_required") or a["assessment"] not in ("OK", "NOK")):
                 raise HTTPException(422, "Avaliação inválida")
             if items[key]["kind"] == "status" and a.get("value", "") not in ["", "OK", "NOK", "NA"]:
                 raise HTTPException(422, "Estado deve ser OK, NOK ou NA")
+        body.payload = corrected_draft_payload(body.payload, r.template, r.status)
+        answers = body.payload.get("answers", {})
         try:
             validate_extras(body.payload, items)
         except ValueError as error:
@@ -979,7 +987,7 @@ def create_app(url=None, bootstrap=True):
             )
         if checkpoint not in {i["id"] for s in r.template["sections"] for i in s["items"]}:
             raise HTTPException(422, "Checkpoint inválido")
-        data = file_bytes(file)
+        data = file_bytes(file, limit=60 * 1024 * 1024)
         # Images are fully decoded; videos receive bounded container/stream inspection.
         # Reject unsupported evidence before committing an immutable attachment.
         try:
@@ -1008,8 +1016,8 @@ def create_app(url=None, bootstrap=True):
                 Photo.report_id == rid
             )
         ).one()
-        if count >= 200 or total + len(data) > 250 * 1024 * 1024:
-            raise HTTPException(413, "Máximo 200 fotografias e 250 MB por report")
+        if count >= 200 or total + len(data) > 400 * 1024 * 1024:
+            raise HTTPException(413, "Máximo 200 evidências e 400 MiB por report")
         db.add(
             Photo(
                 id=pid,

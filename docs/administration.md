@@ -1,8 +1,8 @@
 # Administration and recovery
 
 Use an account authorized for the target installation. Administrative commands mutate the database
-selected by `DATABASE_URL`; verify the target before editing or deleting data. Workstation files
-and logs belong under `ongoing_work`.
+selected by `DATABASE_URL`; verify the target before editing or deleting data. Run local examples
+from the **Server repository root**, and keep local logs/test data in ignored `build/`.
 
 ## Account and data console
 
@@ -18,9 +18,16 @@ container using that installation's `.env`. It requires Docker access as the inv
 sudo when required. With no arguments it starts the interactive `lem-admin>` console. Use `help` for
 examples and `exit` to leave.
 
-For a local development database, from `ongoing_work`, activate the environment and set
-`PYTHONPATH` to `../Server/server` before `python -m app.admin_cli help`. Do not use the bootstrap
-module merely to change an existing account.
+For a local development database, activate the `.venv/` described in
+[Deployment](deployment.md#local-development), keep the same `DATABASE_URL`, then run from the
+Server repository root:
+
+```powershell
+$env:PYTHONPATH = (Resolve-Path server).Path
+python -m app.admin_cli help
+```
+
+Do not use the bootstrap module merely to change an existing account.
 
 | Commands | Purpose |
 | --- | --- |
@@ -47,8 +54,8 @@ not automate a confirmation merely to make an operation unattended.
 [server/manage.py](../server/manage.py) is a smaller local bootstrap/recovery CLI:
 
 ```powershell
-python ../Server/server/manage.py create-admin --email admin@example.test
-python ../Server/server/manage.py reset-password --email admin@example.test
+python server/manage.py create-admin --email admin@example.test
+python server/manage.py reset-password --email admin@example.test
 ```
 
 It prompts twice for a password and commits directly to the selected database. It does not recover
@@ -115,6 +122,7 @@ owned data, while retaining a private sibling backup of configuration/prior back
 transactional.
 
 [remove-prototype.py](../deploy/remove-prototype.py) is a separate first-install cleanup tool. Run
-it from the new package, outside the old installation, with `--installation PATH`. Its default is a
+it from the new Server checkout/package root with `--installation PATH` identifying the old
+prototype. The new checkout must not be inside the old installation being removed. Its default is a
 plan; only `--delete` performs irreversible removal. It is not an update mechanism and does not
 replace preserving a working installation's configuration.

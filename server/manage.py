@@ -4,7 +4,7 @@
 # Local bootstrap/recovery CLI: create-admin or reset-password, with required --email.
 # Uses DATABASE_URL (SQLite in the current directory by default), prompts twice and commits directly.
 # Reset revokes that account's sessions. Prefer app.admin_cli for routine administration.
-# Run from ongoing_work with the development environment active; see docs/administration.md.
+# Run from the Server repository root with the development environment active; see docs/administration.md.
 
 """Local bootstrap CLI. Password is prompted, never written into source."""
 import argparse, getpass

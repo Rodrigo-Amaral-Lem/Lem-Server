@@ -32,7 +32,7 @@ def test_media_formats_and_limits(video, monkeypatch):
     assert inspect_evidence(_jpeg()) == "image/jpeg"
     for invalid in [b"", b"1234ftypisom" + b"\0" * 32, video[:40], b"x" * (20*1024*1024+1)]:
         with pytest.raises(InvalidImage): inspect_evidence(invalid)
-    monkeypatch.setattr("app.media.subprocess.run", lambda *a, **k: SimpleNamespace(stdout=b'{"format":{"duration":"61","format_name":"mov,mp4"},"streams":[{"codec_type":"video","codec_name":"h264","width":64,"height":64}]}'))
+    monkeypatch.setattr("app.media.subprocess.run", lambda *a, **k: SimpleNamespace(stdout=b'{"format":{"duration":"121","format_name":"mov,mp4"},"streams":[{"codec_type":"video","codec_name":"h264","width":64,"height":64}]}'))
     with pytest.raises(InvalidImage): inspect_evidence(video)
 
 
@@ -89,3 +89,24 @@ def test_video_upload_retry_delete_and_required_photo(setup, video):
     with ZipFile(BytesIO(bundle.content)) as z:
         assert z.read(f'videos/EST.01/{pid}.mp4') == video
     assert c.delete(path,headers=h,params={"base_revision":closed.json()["revision"]}).status_code == 409
+
+@pytest.mark.parametrize('duration,accepted', [(60, True), (120, True), (120.5, True), (120.501, False), (0, False)])
+def test_new_duration_boundary(monkeypatch, duration, accepted):
+    import json
+    probe = {'format': {'duration': str(duration), 'format_name': 'mov,mp4'},
+             'streams': [{'codec_type': 'video', 'codec_name': 'h264', 'width': 64, 'height': 64}]}
+    monkeypatch.setattr('app.media.subprocess.run', lambda *a, **k: SimpleNamespace(stdout=json.dumps(probe).encode()))
+    data = b'1234ftypisom' + b'\0' * 32
+    if accepted:
+        assert inspect_evidence(data) == 'video/mp4'
+    else:
+        with pytest.raises(InvalidImage): inspect_evidence(data)
+
+
+def test_new_video_size_boundary_and_photo_cap(monkeypatch):
+    probe = b'{"format":{"duration":"120","format_name":"mov,mp4"},"streams":[{"codec_type":"video","codec_name":"h264","width":64,"height":64}]}'
+    monkeypatch.setattr('app.media.subprocess.run', lambda *a, **k: SimpleNamespace(stdout=probe))
+    data = b'1234ftypisom' + b'\0' * (60 * 1024 * 1024 - 12)
+    assert inspect_evidence(data) == 'video/mp4'
+    with pytest.raises(InvalidImage): inspect_evidence(data + b'x')
+    with pytest.raises(InvalidImage): inspect_evidence(b'x' * (20 * 1024 * 1024 + 1))

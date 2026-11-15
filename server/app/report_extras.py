@@ -10,6 +10,10 @@ def validate_extras(payload, items, photos=None):
     if not isinstance(signatures, dict):
         raise ValueError('Assinaturas inválidas')
     answers = payload.get('answers', {})
+    if photos is not None:
+        for key, item in items.items():
+            if item.get('signature_required') and key not in signatures:
+                raise ValueError(key + ': falta assinatura do técnico')
     for key, signature in signatures.items():
         if key not in items or not items[key].get('supports_signature') or not isinstance(signature, dict):
             raise ValueError('Item de assinatura inválido')

@@ -26,7 +26,11 @@ HTTPS certificates:
 bash deploy/uninstall-server.sh --stop
 ```
 
-Type `PARAR` when asked. Restart later with `cd deploy && sudo docker compose up -d`.
+Type `PARAR` when asked. To restart later, run from the installation root:
+
+```bash
+sudo docker compose --env-file deploy/.env -f deploy/compose.yml up -d
+```
 
 Remove containers, database/evidence, certificates and installation files:
 
