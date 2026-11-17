@@ -1,0 +1,14 @@
+[
+  {"name":"winter", "report":{"status":"closed","finished":"2026-11-16T17:35:08Z","snapshot":{"charger":{"external_id":"GALP-001"},"contract":{"name":"Galp-2026-S1-TRE"}}},"expected":"GALP-001_2026-11-16_17-35-08_Galp-2026-S1-TRE"},
+  {"name":"summer-midnight", "report":{"status":"closed","finished":"2026-07-01T23:05:06Z","snapshot":{"charger":{"external_id":"EV-02"},"contract":{"name":"Contrato Norte"}}},"expected":"EV-02_2026-07-02_00-05-06_Contrato-Norte"},
+  {"name":"offset", "report":{"status":"closed","finished":"2026-11-16T17:35:08+01:00","snapshot":{"charger":{"external_id":"EV-03"},"contract":{"name":"TRE"}}},"expected":"EV-03_2026-11-16_16-35-08_TRE"},
+  {"name":"local-unsynced-close", "report":{"status":"closed","finished":null,"payload":{"finished":"2026-11-16T17:35:08.123Z"},"snapshot":{"charger":{"external_id":"EV-04"},"contract":{"name":"TRE"}}},"expected":"EV-04_2026-11-16_17-35-08_TRE"},
+  {"name":"server-time-authoritative", "report":{"status":"closed","finished":"2026-11-16T17:35:08Z","payload":{"finished":"2026-11-17T17:35:08Z"},"snapshot":{"charger":{"external_id":"EV-05"},"contract":{"name":"TRE"}}},"expected":"EV-05_2026-11-16_17-35-08_TRE"},
+  {"name":"unsafe-characters", "report":{"status":"closed","finished":"2026-11-16T17:35:08Z","snapshot":{"charger":{"external_id":"  EV/01:*?  "},"contract":{"name":" Galp / Porto: TRE. "}}},"expected":"EV-01_2026-11-16_17-35-08_Galp-Porto-TRE"},
+  {"name":"unicode", "report":{"status":"closed","finished":"2026-11-16T17:35:08Z","snapshot":{"charger":{"external_id":"Estação 01"},"contract":{"name":"Cafe\u0301 Norte"}}},"expected":"Estação-01_2026-11-16_17-35-08_Café-Norte"},
+  {"name":"draft", "report":{"status":"draft","finished":"2026-11-16T17:35:08Z","snapshot":{"charger":{"external_id":"EV-06"},"contract":{"name":"TRE"}}},"expected":"EV-06_Rascunho_TRE"},
+  {"name":"legacy-no-end", "report":{"status":"closed","snapshot":{"charger":{"external_id":"EV-07"},"contract":{"name":"TRE"}}},"expected":"EV-07_sem-data_sem-hora_TRE"},
+  {"name":"invalid-time", "report":{"status":"closed","finished":"not-a-date","snapshot":{"charger":{"external_id":"EV-08"},"contract":{"name":"TRE"}}},"expected":"EV-08_sem-data_sem-hora_TRE"},
+  {"name":"timezone-required", "report":{"status":"closed","finished":"2026-11-16T17:35:08","snapshot":{"charger":{"external_id":"EV-09"},"contract":{"name":"TRE"}}},"expected":"EV-09_sem-data_sem-hora_TRE"},
+  {"name":"missing-context", "report":{"status":"closed","finished":"2026-11-16T17:35:08Z"},"expected":"Carregador_2026-11-16_17-35-08_Contrato"}
+]

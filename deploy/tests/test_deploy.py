@@ -11,7 +11,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 PWSH = os.getenv("PWSH") or shutil.which("pwsh")
-pytestmark = pytest.mark.skipif(not PWSH, reason="Set PWSH to a PowerShell 7 executable")
+pytestmark = pytest.mark.skipif(
+    os.name != "posix" or not PWSH,
+    reason="Remote-flow mocks require POSIX executable scripts, Bash and PowerShell 7",
+)
 MOCK = r"""#!/usr/bin/env python3
 import json,os,sys,subprocess,shutil
 from pathlib import Path
@@ -43,6 +46,8 @@ elif name=='sleep':sys.exit(0)
 
 @pytest.fixture
 def deployment(tmp_path):
+    if os.name != "posix":
+        pytest.skip("SSH/Docker mocks require POSIX executable scripts")
     project = tmp_path / "project with spaces"
     project.mkdir()
     for folder in ["server", "shared", "deploy"]:
@@ -167,7 +172,7 @@ def test_normal_update_keeps_env_and_backs_up_database(deployment):
     assert r.returncode == 0, r.stdout + r.stderr
     assert (
         target / "deploy/.env"
-    ).read_bytes() == oldenv + b"LEM_LATEST_CLIENT_VERSION=0.1.52\nLEM_MIN_CLIENT_VERSION=0.2.0\n"
+    ).read_bytes() == oldenv + b"LEM_LATEST_CLIENT_VERSION=0.3.0\nLEM_MIN_CLIENT_VERSION=0.2.6\n"
     assert (target / "server/run.py").read_bytes() == (project / "server/run.py").read_bytes()
     assert not (target / "server/obsolete.py").exists()
     assert next((target / ".deploy-backups").glob("*/server/obsolete.py")).exists()

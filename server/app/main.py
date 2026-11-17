@@ -11,13 +11,13 @@ from .stations import lock_catalogue, get_or_create_station, close_identity, Sta
 
 import json, os, secrets, hashlib, uuid, threading, asyncio, logging
 from contextlib import asynccontextmanager
-from tempfile import SpooledTemporaryFile
+from tempfile import SpooledTemporaryFile, TemporaryDirectory
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Request, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator
 from sqlalchemy import select, update, delete, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -32,6 +32,7 @@ from .models import (
     Charger,
     Station,
     Report,
+    ReportCorrection,
     DeletedReport,
     OwnershipTransfer,
     Photo,
@@ -43,13 +44,19 @@ from .models import (
 from .security import hash_password, verify, digest, LoginLimiter
 from .request_limits import RequestBodyLimit
 from .compatibility import ClientPolicy, VERSION
+from .branding import selection, contract_logos, contract_presentation, save_presentation, ISSUERS
 from .importer import analyse, parse
 from .images import InvalidImage
 from .media import inspect_evidence
-from .checklist import for_charger, corrected_draft_template, corrected_draft_payload
-from .measurements import digits as measurement_digits, format_value, not_applicable
+from .checklist import for_charger, corrected_draft_template, corrected_draft_payload, connector_names
+from .measurements import digits as measurement_digits, format_value, not_applicable, canonical, milliamp
+from .maintenance_rules import apply_assessments, reading as maintenance_reading
+from .maintenance_migration import upgrade_checkpoint, persist_upgrade
 from .exports import write_bundle, file_chunks, MissingEvidence
+from .report_naming import report_identifier, content_disposition
 from .contract_trash import RETENTION, utc_now, purge_expired
+from . import corrections
+from .evidence_cache import EvidenceCache, EvidenceResponse
 
 TEMPLATE = json.loads(
     (
@@ -63,6 +70,10 @@ TEMPLATE = json.loads(
 )
 
 
+# Preserve already-closed offline v6 reports during an upgrade. They are history,
+# unlike editable drafts/correction copies, and must retain their original checklist.
+LEGACY_TEMPLATE = json.loads((Path(__file__).resolve().parents[2] / "shared/checklist-v6.json").read_text(encoding="utf-8"))
+
 # Docker copies shared into server/shared; development uses sibling shared.
 class Login(BaseModel):
     email: str = Field(max_length=254)
@@ -72,6 +83,11 @@ class Login(BaseModel):
 class NewUser(Login):
     name: str = Field(min_length=1, max_length=200)
     role: str = "tech"
+
+
+class ResetTechnicianPassword(BaseModel):
+    # Do not echo a password in a length-validation response or model repr.
+    password: SecretStr
 
 
 class NewContract(BaseModel):
@@ -97,12 +113,19 @@ class TrashContractInput(BaseModel):
 
 
 class ReportInput(BaseModel):
+    # A v6 report already closed offline still uploads photos in a draft staging phase.
+    frozen_history: bool = Field(default=False, strict=True)
     checklist_version: int = Field(ge=1, strict=True)
     load_test_connectors: list[str] | None = Field(default=None, max_length=64)
     charger_id: str
     base_revision: int = Field(ge=0)
     status: str = "draft"
     payload: dict
+
+
+class CorrectionInput(BaseModel):
+    id: str
+    base_revision: int = Field(ge=1)
 
 
 def uid():
@@ -186,6 +209,8 @@ def create_app(url=None, bootstrap=True):
     )
     app.state.client_policy = policy
     app.state.factory = Factory
+    evidence_cache = EvidenceCache()
+    app.state.evidence_cache = evidence_cache
     app.state.purge_expired_contracts = lambda instant=None: purge_expired(Factory, instant)
     bearer = HTTPBearer()
     app.add_middleware(RequestBodyLimit)
@@ -201,15 +226,16 @@ def create_app(url=None, bootstrap=True):
 
     export_slots = threading.BoundedSemaphore(resource_limit("LEM_EXPORT_CONCURRENCY", 2, 4))
     image_slots = threading.BoundedSemaphore(resource_limit("LEM_IMAGE_CONCURRENCY", 1, 2))
+    download_slots = threading.BoundedSemaphore(resource_limit("LEM_DOWNLOAD_CONCURRENCY", 8, 16))
 
-    def admission(slots, operation):
+    def admission(slots, operation, retry_after=15):
         # Fail fast BEFORE authentication opens a DB transaction. Waiting while
         # holding that connection can starve login/sync under concurrent exports.
         if not slots.acquire(blocking=False):
             raise HTTPException(
                 503,
                 f"Servidor ocupado: {operation}; tente novamente",
-                headers={"Retry-After": "15"},
+                headers={"Retry-After": str(retry_after)},
             )
         try:
             yield
@@ -222,13 +248,17 @@ def create_app(url=None, bootstrap=True):
     def image_admission():
         yield from admission(image_slots, "validação de fotografias")
 
+    def download_admission():
+        yield from admission(download_slots, "transferência de evidências", 2)
+
     # One SQLAlchemy session per request; endpoint handlers explicitly commit accepted writes.
     def db_dep():
         with Factory() as db:
             yield db
 
     # Resolve only the digest of a bearer token; raw session tokens are not stored in the DB.
-    def user_dep(auth: HTTPAuthorizationCredentials = Depends(bearer), db=Depends(db_dep)):
+    def user_dep(request: Request, auth: HTTPAuthorizationCredentials = Depends(bearer), db=Depends(db_dep)):
+        db.info["client_platform"] = request.headers.get("X-Lem-Client-Platform", "")
         token = db.get(SessionToken, digest(auth.credentials))
         if not token or token.expires < now():
             raise HTTPException(401, "Sessão expirada; entre novamente")
@@ -274,10 +304,11 @@ def create_app(url=None, bootstrap=True):
             if tombstone:
                 charger = db.get(Charger, tombstone.charger_id)
                 accessible(db, user, charger.contract_id)
-                raise HTTPException(410, "Report apagado definitivamente")
+                raise HTTPException(410, corrections.replaced_detail(db, rid))
             raise HTTPException(404, "Report inexistente")
         charger = db.get(Charger, r.charger_id)
         accessible(db, user, charger.contract_id)
+        corrections.gate(db, user, rid)
         if write and r.owner_id != user.id:
             raise HTTPException(
                 403,
@@ -314,20 +345,47 @@ def create_app(url=None, bootstrap=True):
     # Serialize one report, including its frozen context/checklist and photograph metadata.
     def report_json(db, r):
         owner = db.get(User, r.owner_id)
+        projection_status = "closed" if r.template.get("frozen_upload") else r.status
+        correction = db.get(ReportCorrection, r.id)
+        schema, payload = r.template, r.payload
+        photos = photo_metadata(db, r.id)
+        if (correction and correction.state == "editing" and r.status == "draft"
+                and schema.get("version", 0) < 6):
+            # Existing correction copies also receive the current form on GET;
+            # the matching write projection persists under the report lock.
+            from .legacy_correction import project
+            schema, payload, mapping = project(schema, payload, photos, r.snapshot, TEMPLATE)
+            photos = [dict(photo, checkpoint=mapping[photo["checkpoint"]]) for photo in photos]
+        technician = db.get(User, correction.original_owner_id) if correction and correction.state == "editing" else owner
+        charger = db.get(Charger, r.charger_id)
+        contract_id = charger.contract_id
+        # Return current station data on both commit and GET recovery after a lost
+        # acknowledgement. Historical snapshots must never revert a newer model.
+        station_update = ({"station_update": {"station_id": charger.station_id,
+                           "external_id": charger.external_id, "details": charger.details}}
+                          if correction and correction.state == "committed" else {})
         return {
             "id": r.id,
+            "contract_id": contract_id,
+            "presentation": contract_presentation(db, contract_id),
+            "identifier": report_identifier({"snapshot": r.snapshot, "status": r.status, "finished": r.finished,
+                                              "payload": r.payload}),
             "charger_id": r.charger_id,
             "owner_id": r.owner_id if owner and owner.role in ("admin", "tech") else "",
-            "technician": owner.name if owner and owner.role in ("admin", "tech") else "Sem proprietário",
+            "technician": technician.name if technician and technician.role in ("admin", "tech") else "Sem proprietário",
+            **({"correction": corrections.metadata(correction)} if correction else {}),
+            **station_update,
             "revision": r.revision,
             "status": r.status,
-            "payload": corrected_draft_payload(r.payload, r.template, r.status),
+            "payload": corrected_draft_payload(payload, schema, projection_status),
             "snapshot": r.snapshot,
-            "template": corrected_draft_template(r.template, r.status),
+            "template": corrected_draft_template(schema, projection_status),
             "started": r.started,
             "updated": r.updated,
             "finished": r.finished,
-            "photos": photo_metadata(db, r.id),
+            "photos": [dict(p, checkpoint=upgrade_checkpoint(p["checkpoint"]))
+                       if projection_status == "draft" and schema.get("version") == 6 else p
+                       for p in photos],
         }
 
     @app.get("/api/health")
@@ -407,6 +465,29 @@ def create_app(url=None, bootstrap=True):
             raise HTTPException(409, "Email já existe") from None
         return {"id": v.id}
 
+    @app.put("/api/users/{user_id}/password")
+    def reset_technician_password(user_id: str, body: ResetTechnicianPassword,
+                                  u=Depends(admin), db=Depends(db_dep)):
+        password = body.password.get_secret_value()
+        if not 12 <= len(password) <= 200:
+            raise HTTPException(422, "Password entre 12 e 200 caracteres")
+        encoded = hash_password(password)
+        # Filter BEFORE locking: administrators cannot target each other and
+        # deadlock while each request already holds its caller's shared User lock.
+        # NO KEY UPDATE also serializes against login, console changes and resets.
+        technician = db.scalar(select(User).where(User.id == user_id, User.role == "tech")
+                               .with_for_update(key_share=True)
+                               .execution_options(populate_existing=True))
+        if technician is None:
+            if db.get(User, user_id) is None:
+                raise HTTPException(404, "Técnico inexistente")
+            raise HTTPException(403, "Só é possível repor passwords de técnicos")
+        technician.password = encoded
+        db.execute(delete(SessionToken).where(SessionToken.user_id == technician.id))
+        audit(db, u, "user.password.reset", technician.id)
+        db.commit()
+        return {"ok": True, "user_id": technician.id}
+
     @app.get("/api/contracts")
     def contracts(u=Depends(user_dep), db=Depends(db_dep)):
         query = select(Contract).where(~Contract.id.in_(select(ContractTrash.contract_id))).order_by(Contract.year.desc(), Contract.company, Contract.semester)
@@ -422,9 +503,32 @@ def create_app(url=None, bootstrap=True):
                 "semester": c.semester,
                 "kind": c.kind,
                 "name": c.name,
+                "report_logos": contract_logos(db, c.id),
+                "presentation": contract_presentation(db, c.id),
             }
             for c in db.scalars(query)
         ]
+
+    class ReportPresentationInput(BaseModel):
+        issuer: str
+        client_logos: list[str] = Field(default_factory=list, max_length=2)
+        base_revision: int = Field(ge=0)
+
+    @app.get("/api/contracts/{cid}/presentation")
+    def current_presentation(cid: str, response: Response, u=Depends(user_dep), db=Depends(db_dep)):
+        accessible(db, u, cid)
+        response.headers["Cache-Control"] = "no-store"
+        return contract_presentation(db, cid)
+
+    @app.put("/api/contracts/{cid}/presentation")
+    def update_presentation(cid: str, body: ReportPresentationInput, u=Depends(admin), db=Depends(db_dep)):
+        accessible(db, u, cid, write=True)
+        if any(logo in ISSUERS for logo in body.client_logos):
+            raise HTTPException(422, "Os logótipos do cliente são adicionais à entidade do report")
+        result = save_presentation(db, cid, body.issuer, body.client_logos, body.base_revision)
+        audit(db, u, "contract.presentation", cid)
+        db.commit()
+        return result
 
     @app.get("/api/admin/deleted-contracts")
     def deleted_contracts(u=Depends(admin), db=Depends(db_dep)):
@@ -515,27 +619,45 @@ def create_app(url=None, bootstrap=True):
         # Bulk metadata queries; no answer payloads, templates or photo BLOBs.
         summaries = {}
         rows = db.execute(
-            select(Report.charger_id, Report.id, Report.status, Report.owner_id, Report.updated)
+            select(Report.charger_id, Report.id, Report.status, Report.owner_id, Report.updated, Report.revision,
+                   Report.finished, ReportCorrection.state.label("correction_state"),
+                   ReportCorrection.editor_id.label("correction_editor"),
+                   Report.snapshot["charger"]["external_id"].as_string().label("report_charger"),
+                   Report.snapshot["contract"]["name"].as_string().label("report_contract"))
             .join(Charger, Charger.id == Report.charger_id)
+            .outerjoin(ReportCorrection, ReportCorrection.id == Report.id)
             .where(Charger.contract_id == cid)
             .order_by(Report.updated.desc())
         )
         for row in rows:
+            if row.correction_state == "editing" and (u.role != "admin" or row.correction_editor != u.id or
+                               db.info.get("client_platform") not in ("windows", "linux")):
+                continue
             summaries.setdefault(row.charger_id, []).append(
                 {
                     "id": row.id,
+                    "identifier": report_identifier({"status": row.status, "finished": row.finished,
+                        "snapshot": {"charger": {"external_id": row.report_charger},
+                                     "contract": {"name": row.report_contract}}}),
                     "status": row.status,
                     "owner_id": row.owner_id,
                     "updated": row.updated,
+                    "revision": row.revision,
                 }
             )
         removed = {}
+        replacements = {}
         for row in db.execute(
-            select(DeletedReport.charger_id, DeletedReport.id)
+            select(DeletedReport.charger_id, DeletedReport.id, ReportCorrection.id.label("replacement_id"))
+            .select_from(DeletedReport)
             .join(Charger, Charger.id == DeletedReport.charger_id)
+            .outerjoin(ReportCorrection, (ReportCorrection.source_id == DeletedReport.id) &
+                       (ReportCorrection.state == "committed"))
             .where(Charger.contract_id == cid)
         ):
             removed.setdefault(row.charger_id, []).append(row.id)
+            if row.replacement_id:
+                replacements[row.id] = row.replacement_id
         return [
             {
                 "id": c.id,
@@ -545,6 +667,7 @@ def create_app(url=None, bootstrap=True):
                 "details": c.details,
                 "reports": summaries.get(c.id, []),
                 "deleted_reports": removed.get(c.id, []),
+                "report_replacements": {rid: replacements[rid] for rid in removed.get(c.id, []) if rid in replacements},
             }
             for c in db.scalars(
                 select(Charger).options(joinedload(Charger.station)).where(Charger.contract_id == cid).order_by(Charger.external_id)
@@ -586,6 +709,13 @@ def create_app(url=None, bootstrap=True):
             raise HTTPException(422, "Mapeamento JSON inválido")
         if not isinstance(config, dict):
             raise HTTPException(422, "Mapeamento deve ser objeto")
+        logos = selection(config["report_logos"]) if "report_logos" in config else None
+        issuer = config.get("report_issuer")
+        if issuer is not None and issuer not in ISSUERS:
+            raise HTTPException(422, "Escolha Lem ou CSMTEC como entidade do report")
+        branding_revision = config.get("branding_revision")
+        if branding_revision is not None and (type(branding_revision) is not int or branding_revision < 0):
+            raise HTTPException(422, "Revisão do formato inválida")
         data = file_bytes(file)
         result = parse(data, config)
         # Parsing does not need a contract lock: keep ordinary field requests
@@ -605,6 +735,11 @@ def create_app(url=None, bootstrap=True):
             raise HTTPException(
                 422, {"message": "Importação bloqueada; corrija os IDs", "errors": result["errors"]}
             )
+        if logos is not None or issuer is not None:
+            current_style = contract_presentation(db, cid)
+            save_presentation(db, cid, issuer or current_style["issuer"],
+                [logo["id"] for logo in (logos if logos is not None else current_style["client_logos"])],
+                branding_revision)
         created = changed = 0
         lock_catalogue(db)
         existing = {
@@ -631,7 +766,8 @@ def create_app(url=None, bootstrap=True):
         # protect their shared profile key: use one atomic upsert instead of
         # SELECT-then-INSERT. The last committed mapping remains the default.
         insert = postgres_insert if db.get_bind().dialect.name == "postgresql" else sqlite_insert
-        profile = insert(ImportProfile).values(company=contract.company, mapping=config)
+        profile_mapping = {k: v for k, v in config.items() if k not in ("report_logos", "report_issuer", "branding_revision")}
+        profile = insert(ImportProfile).values(company=contract.company, mapping=profile_mapping)
         db.execute(profile.on_conflict_do_update(
             index_elements=[ImportProfile.company], set_={"mapping": profile.excluded.mapping}))
         out = {"created": created, "updated": changed}
@@ -680,6 +816,111 @@ def create_app(url=None, bootstrap=True):
         except ValueError:
             raise HTTPException(422, "Data ISO 8601 inválida")
 
+    def validate_report_payload(db, r, body):
+        # Both ordinary closure and direct correction commits must enforce current
+        # draft rules. A copied historical template must not bypass photo checks.
+        legacy_closure = body.checklist_version == 6 and (body.frozen_history or body.status == "closed") and r.template.get("version") == 6
+        if body.frozen_history:
+            if not legacy_closure or not body.payload.get("started") or not body.payload.get("finished"):
+                raise HTTPException(422, "O envio histórico exige um report v6 já fechado, com início e fim")
+            corrections.checked_times(body.payload)
+        if r.template.get("frozen_upload") and not legacy_closure:
+            if body.status != "draft" or body.checklist_version != TEMPLATE["version"]:
+                raise HTTPException(409, "Este report antigo está a terminar a sincronização do fecho")
+            # Owner/revision were checked under the write lock by put_report.
+            # Explicitly reopening as a current draft abandons a rejected old
+            # closure; remove the transfer marker and migrate in this transaction.
+            r.template = {key: value for key, value in r.template.items() if key != "frozen_upload"}
+        if legacy_closure:
+            frozen = dict(r.template)
+            if body.status == "draft": frozen["frozen_upload"] = True
+            else: frozen.pop("frozen_upload", None)
+            r.template = corrected_draft_template(frozen, r.status, upgrade=False)
+        else:
+            persist_upgrade(db, r, TEMPLATE)
+            r.template = corrected_draft_template(r.template, r.status)
+        if body.checklist_version != r.template.get("version"):
+            raise HTTPException(409, "A checklist mudou. Atualize a app e o report; a cópia local foi conservada")
+        # Validate the projected text, not only the shorter inputs from which
+        # migration may have merged it. GET and PUT must return the same payload.
+        body.payload = corrected_draft_payload(body.payload, r.template, r.status, upgrade=False)
+        if len(json.dumps(body.payload)) > 300000:
+            raise HTTPException(413, "Report demasiado grande")
+        items = {i["id"]: i for s in r.template["sections"] for i in s["items"]}
+        answers = body.payload.get("answers", {})
+        if not isinstance(answers, dict) or any(k not in items for k in answers):
+            raise HTTPException(422, "Resposta/checkpoint inválido")
+        # Compatibility with clients that inserted null for untouched optional fields.
+        # Required answers and non-null invalid data still undergo strict validation.
+        answers = {key: a for key, a in answers.items()
+                   if a is not None or not items[key].get("optional")}
+        if "answers" in body.payload:
+            body.payload["answers"] = answers
+        for key, a in answers.items():
+            if (
+                not isinstance(a, dict)
+                or not isinstance(a.get("value", ""), str)
+                or not isinstance(a.get("notes", ""), str)
+            ):
+                raise HTTPException(422, key + ": resposta deve ter texto e observações")
+            # General notes can merge several formerly independent 8000-character
+            # fields (up to 24002 in the v6 migration). Keep a bounded allowance
+            # for that complete text, plus the unchanged total payload limit.
+            notes_limit = 32000 if items[key]["kind"] == "notes" else 8000
+            if len(a.get("value", "")) > 8000 or len(a.get("notes", "")) > notes_limit:
+                raise HTTPException(422, "Texto demasiado longo")
+            if "assessment" in a and (not items[key].get("reading_required") or a["assessment"] not in ("OK", "NOK")):
+                raise HTTPException(422, "Avaliação inválida")
+            if items[key]["kind"] == "status" and a.get("value", "") not in ["", "OK", "NOK", "NA"]:
+                raise HTTPException(422, "Estado deve ser OK, NOK ou NA")
+        answers = body.payload.get("answers", {})
+        if r.template.get("version", 0) >= 7:
+            # Recompute independently of the client; never silently refill a note
+            # the technician cleared to enter their own observation.
+            answers = apply_assessments(answers)
+            body.payload["answers"] = answers
+        try:
+            validate_extras(body.payload, items)
+        except ValueError as error:
+            raise HTTPException(422, str(error))
+        if body.status == "closed":
+            # Drafts retain in-progress typing (e.g. a trailing decimal separator).
+            # A closed report must contain complete, formatted measurements.
+            for key, answer in answers.items():
+                measurement_key = canonical(key) if r.template.get("version", 0) < 7 and milliamp(key) else key
+                if measurement_digits(measurement_key):
+                    try:
+                        answer["value"] = format_value(measurement_key, answer.get("value", ""))
+                    except ValueError as error:
+                        raise HTTPException(422, str(error))
+            photos = photo_metadata(db, r.id)
+            try:
+                validate_extras(body.payload, items, photos)
+            except ValueError as error:
+                raise HTTPException(422, str(error))
+            errors = []
+            if r.template.get("version", 0) >= 7 and maintenance_reading(answers, "MAN.11") == 0:
+                errors.append("MAN.11: o calibre configurado deve ser superior a zero")
+            for key, item in items.items():
+                a = answers.get(key, {})
+                value = a.get("value", "").strip()
+                if not value and not item.get("optional"):
+                    errors.append(key + ": falta resposta")
+                if item.get("reading_required") and value.upper() in ("OK", "NOK"):
+                    errors.append(key + ": falta valor medido")
+                if not item.get("notes_disabled") and (value == "NOK" or a.get("assessment") == "NOK") and not a.get("notes", "").strip():
+                    errors.append(key + ": NOK precisa de observação")
+                if item.get("na_notes_required") and not_applicable(value) and not a.get("notes", "").strip():
+                    errors.append(key + ": N/A precisa de observação")
+                if (
+                    item["photo_required"]
+                    and (item.get("photo_always") or not not_applicable(value))
+                    and not any(p["checkpoint"] == key and not p["mime"].startswith("video/") for p in photos)
+                ):
+                    errors.append(key + ": falta fotografia")
+            if errors:
+                raise HTTPException(422, {"message": "Checklist incompleta", "items": errors})
+
     # Create or update a report with optimistic concurrency. Ownership/revision conditions
     # are enforced in the final UPDATE, not just in an earlier read. Closure validates all evidence.
     @app.put("/api/reports/{rid}")
@@ -700,12 +941,16 @@ def create_app(url=None, bootstrap=True):
         # Always lock the contract before its charger, matching trash/purge.
         charger = db.scalar(select(Charger).where(Charger.id == body.charger_id).with_for_update())
         if db.get(DeletedReport, rid):
-            raise HTTPException(410, "Report apagado definitivamente; não pode ser recriado")
-        r = db.get(Report, rid)
+            raise HTTPException(410, corrections.replaced_detail(db, rid))
+        # Serialize answer/closure validation with photo writes and ownership changes.
+        r = db.scalar(select(Report).where(Report.id == rid).with_for_update()
+                      .execution_options(populate_existing=True))
         if r:
-            if body.checklist_version != r.template.get("version"):
-                raise HTTPException(409, "A versão da checklist não corresponde ao report; cópia local conservada")
+            # Authorize and check the revision before migrating. Validation below
+            # atomically upgrades editable v6 data and checks the resulting schema.
             report_access(db, u, rid, write=True)
+            if db.get(ReportCorrection, rid) and body.status == "closed":
+                raise HTTPException(409, "Guarde a correção pela operação de substituição do original")
             if r.charger_id != charger.id:
                 raise HTTPException(409, "Não pode alterar carregador do report")
             if r.revision != body.base_revision:
@@ -715,17 +960,22 @@ def create_app(url=None, bootstrap=True):
             if r.status == "closed":
                 raise HTTPException(409, "Report fechado é imutável; crie nova intervenção")
         else:
-            if body.checklist_version != TEMPLATE["version"]:
+            legacy_closed = body.checklist_version == 6 and (body.status == "closed" or body.frozen_history)
+            if body.checklist_version != TEMPLATE["version"] and not legacy_closed:
                 raise HTTPException(409, "A checklist mudou. Crie um novo report; o rascunho antigo foi conservado para consulta")
             if body.base_revision != 0:
                 raise HTTPException(409, "Report inexistente com revisão diferente de zero")
             try:
-                checklist = for_charger(TEMPLATE, charger.details)
+                checklist = for_charger(LEGACY_TEMPLATE if legacy_closed else TEMPLATE, charger.details)
+                # Older compatible clients still send the former Type 2 name.
+                # Compare physical connector order/count after alias normalization.
+                supplied_connectors = (connector_names(body.load_test_connectors)
+                                       if body.load_test_connectors is not None else None)
             except ValueError as exc:
                 raise HTTPException(422, str(exc))
             if (
                 body.load_test_connectors is not None
-                and body.load_test_connectors != checklist["load_test_connectors"]
+                and supplied_connectors != checklist["load_test_connectors"]
             ):
                 raise HTTPException(
                     409,
@@ -742,6 +992,7 @@ def create_app(url=None, bootstrap=True):
                     "charger": {**charger.details, "external_id": charger.external_id, "station_id": charger.station_id},
                     "contract": {
                         "name": contract.name,
+                        "report_logos": contract_logos(db, contract.id),
                         "company": contract.company,
                         "year": contract.year,
                         "semester": contract.semester,
@@ -752,70 +1003,7 @@ def create_app(url=None, bootstrap=True):
             )
             db.add(r)
             db.flush()
-        r.template = corrected_draft_template(r.template, r.status)
-        items = {i["id"]: i for s in r.template["sections"] for i in s["items"]}
-        answers = body.payload.get("answers", {})
-        if not isinstance(answers, dict) or any(k not in items for k in answers):
-            raise HTTPException(422, "Resposta/checkpoint inválido")
-        # Compatibility with clients that inserted null for untouched optional fields.
-        # Required answers and non-null invalid data still undergo strict validation.
-        answers = {key: a for key, a in answers.items()
-                   if a is not None or not items[key].get("optional")}
-        if "answers" in body.payload:
-            body.payload["answers"] = answers
-        for key, a in answers.items():
-            if (
-                not isinstance(a, dict)
-                or not isinstance(a.get("value", ""), str)
-                or not isinstance(a.get("notes", ""), str)
-            ):
-                raise HTTPException(422, key + ": resposta deve ter texto e observações")
-            if len(a.get("value", "")) > 8000 or len(a.get("notes", "")) > 8000:
-                raise HTTPException(422, "Texto demasiado longo")
-            if "assessment" in a and (not items[key].get("reading_required") or a["assessment"] not in ("OK", "NOK")):
-                raise HTTPException(422, "Avaliação inválida")
-            if items[key]["kind"] == "status" and a.get("value", "") not in ["", "OK", "NOK", "NA"]:
-                raise HTTPException(422, "Estado deve ser OK, NOK ou NA")
-        body.payload = corrected_draft_payload(body.payload, r.template, r.status)
-        answers = body.payload.get("answers", {})
-        try:
-            validate_extras(body.payload, items)
-        except ValueError as error:
-            raise HTTPException(422, str(error))
-        if body.status == "closed":
-            # Drafts retain in-progress typing (e.g. a trailing decimal separator).
-            # A closed report must contain complete, formatted measurements.
-            for key, answer in answers.items():
-                if measurement_digits(key):
-                    try:
-                        answer["value"] = format_value(key, answer.get("value", ""))
-                    except ValueError as error:
-                        raise HTTPException(422, str(error))
-            photos = photo_metadata(db, rid)
-            try:
-                validate_extras(body.payload, items, photos)
-            except ValueError as error:
-                raise HTTPException(422, str(error))
-            errors = []
-            for key, item in items.items():
-                a = answers.get(key, {})
-                value = a.get("value", "").strip()
-                if not value and not item.get("optional"):
-                    errors.append(key + ": falta resposta")
-                if item.get("reading_required") and value.upper() in ("OK", "NOK"):
-                    errors.append(key + ": falta valor medido")
-                if not item.get("notes_disabled") and (value == "NOK" or a.get("assessment") == "NOK") and not a.get("notes", "").strip():
-                    errors.append(key + ": NOK precisa de observação")
-                if item.get("na_notes_required") and not_applicable(value) and not a.get("notes", "").strip():
-                    errors.append(key + ": N/A precisa de observação")
-                if (
-                    item["photo_required"]
-                    and (item.get("photo_always") or not not_applicable(value))
-                    and not any(p["checkpoint"] == key and not p["mime"].startswith("video/") for p in photos)
-                ):
-                    errors.append(key + ": falta fotografia")
-            if errors:
-                raise HTTPException(422, {"message": "Checklist incompleta", "items": errors})
+        validate_report_payload(db, r, body)
         next_snapshot = r.snapshot
         if body.status == "closed":
             try:
@@ -850,6 +1038,26 @@ def create_app(url=None, bootstrap=True):
                                      "details": charger.details}
         return out
 
+    @app.post("/api/reports/{rid}/corrections")
+    def begin_correction(rid: str, body: CorrectionInput, u=Depends(admin), db=Depends(db_dep)):
+        corrections.desktop_admin(db, u)
+        corrections.lock_report_users(db, rid)
+        source = report_access(db, u, rid)
+        report = corrections.begin(db, u, source, body.id, body.base_revision, TEMPLATE)
+        audit(db, u, "report.correction.begin", report.id)
+        db.commit()
+        return report_json(db, report)
+
+    @app.post("/api/reports/{rid}/correction/commit")
+    def commit_correction(rid: str, body: ReportInput, u=Depends(admin), db=Depends(db_dep)):
+        corrections.desktop_admin(db, u)
+        corrections.lock_report_users(db, rid)
+        report = report_access(db, u, rid)
+        report = corrections.commit(db, u, report, body, validate_report_payload, TEMPLATE)
+        audit(db, u, "report.correction.commit", report.id)
+        db.commit()
+        return report_json(db, report)
+
     # List administrators plus technicians assigned to this report's contract.
     @app.get("/api/reports/{rid}/owners")
     def report_owners(rid: str, u=Depends(admin), db=Depends(db_dep)):
@@ -877,6 +1085,8 @@ def create_app(url=None, bootstrap=True):
         if not target or target.role not in ("admin", "tech"):
             raise HTTPException(422, "Proprietário inexistente")
         r = report_access(db, u, rid)
+        if db.get(ReportCorrection, rid):
+            raise HTTPException(409, "Uma cópia de correção não pode ser transferida")
         # Same lock order as PUT/delete; all photo mutations also lock this report.
         db.scalar(select(Charger).where(Charger.id == r.charger_id).with_for_update())
         r = db.scalar(
@@ -921,15 +1131,16 @@ def create_app(url=None, bootstrap=True):
     # Administrative deletion is intentionally broader than editing ownership.
     # Delete image rows and create a permanent report tombstone in the same transaction.
     @app.delete("/api/reports/{rid}")
-    def delete_report(rid: str, base_revision: int, u=Depends(user_dep), db=Depends(db_dep)):
+    def delete_report(rid: str, base_revision: int, correction_only: bool = False, u=Depends(user_dep), db=Depends(db_dep)):
         uuid_check(rid)
+        corrections.lock_report_users(db, rid)
         r = db.get(Report, rid) or db.get(DeletedReport, rid)
         if not r:
             raise HTTPException(404, "Report inexistente")
         # Contract -> charger -> report matches retention and console mutations.
         charger = db.get(Charger, r.charger_id)
         accessible(db, u, charger.contract_id)
-        charger = db.scalar(select(Charger).where(Charger.id == r.charger_id).with_for_update())
+        charger = corrections.lock_charger(db, r.charger_id)
         r = db.scalar(
             select(Report)
             .where(Report.id == rid)
@@ -944,10 +1155,23 @@ def create_app(url=None, bootstrap=True):
             )
         if isinstance(r, DeletedReport):
             return {"id": rid, "deleted": True}
+        correction = corrections.gate(db, u, rid)
+        if correction_only and (not correction or correction.state != "editing"):
+            raise HTTPException(409, "A correção já foi concluída; o report final foi conservado")
+        if db.scalar(select(ReportCorrection.id).where(ReportCorrection.source_id == rid,
+                ReportCorrection.state == "editing").limit(1)):
+            raise HTTPException(409, "Existe uma correção em curso; cancele-a antes de apagar o original")
+        if correction and correction.state == "editing":
+            correction.state = "cancelled"
         if r.revision != base_revision:
             raise HTTPException(
                 409, "Report alterado noutro dispositivo; sincronize ou atualize antes de apagar"
             )
+        claimed = db.execute(update(Report).where(Report.id == rid, Report.revision == base_revision,
+            Report.owner_id == r.owner_id, Report.status == r.status).values(revision=base_revision+1)
+            .execution_options(synchronize_session=False))
+        if claimed.rowcount != 1:
+            raise HTTPException(409, "Report alterado durante a remoção; dados conservados")
         db.execute(delete(Photo).where(Photo.report_id == rid))
         db.add(
             DeletedReport(id=r.id, charger_id=r.charger_id, owner_id=r.owner_id, status=r.status)
@@ -985,6 +1209,11 @@ def create_app(url=None, bootstrap=True):
             raise HTTPException(
                 403, "A propriedade do rascunho mudou; cópia local deve ser conservada"
             )
+        # GET can expose the upgraded editable form before the next answers PUT.
+        # Accept those checkpoints for independent media uploads too, under the
+        # same write lock/transaction. Invalid uploads roll the migration back.
+        if r.status == "draft" and r.revision == base_revision:
+            persist_upgrade(db, r, TEMPLATE)
         if checkpoint not in {i["id"] for s in r.template["sections"] for i in s["items"]}:
             raise HTTPException(422, "Checkpoint inválido")
         data = file_bytes(file, limit=60 * 1024 * 1024)
@@ -1006,6 +1235,7 @@ def create_app(url=None, bootstrap=True):
                 or existing.digest != sha
             ):
                 raise HTTPException(409, "ID de fotografia já utilizado")
+            db.commit()  # Also retain any migration needed for this exact retry.
             return {"id": pid, "digest": sha}
         if r.status == "closed":
             raise HTTPException(409, "Report fechado")
@@ -1088,22 +1318,44 @@ def create_app(url=None, bootstrap=True):
 
     # Return original bytes only after contract access and report/photo association checks.
     @app.get("/api/reports/{rid}/photos/{pid}")
-    def get_photo(rid: str, pid: str, u=Depends(user_dep), db=Depends(db_dep)):
-        report_access(db, u, rid)
-        p = db.get(Photo, pid)
-        if not p or p.report_id != rid:
-            raise HTTPException(404, "Fotografia inexistente")
-        return Response(p.data, media_type=p.mime)
+    def get_photo(rid: str, pid: str, request: Request, _slot=Depends(download_admission), u=Depends(user_dep), db=Depends(db_dep)):
+        from .downloads import byte_range
+        try:
+            report_access(db, u, rid)
+            p = db.execute(select(Photo.mime, Photo.digest, func.length(Photo.data).label("size"))
+                .where(Photo.id == pid, Photo.report_id == rid)).first()
+            if not p:
+                raise HTTPException(404, "Fotografia inexistente")
+            etag = '"' + p.digest + '"'
+            span = byte_range(request.headers.get("range"), p.size, request.headers.get("if-range"), etag)
+            headers = {"Accept-Ranges": "bytes", "ETag": etag, "Cache-Control": "private, no-transform"}
+            start, end = 0, p.size - 1
+            if span:
+                start, end = span
+                headers["Content-Range"] = f"bytes {start}-{end}/{p.size}"
+            db.close()
+            def load():
+                with Factory() as source_db:
+                    return source_db.scalar(select(Photo.data).where(Photo.id == pid, Photo.report_id == rid))
+            try:
+                lease = evidence_cache.acquire((rid, pid, p.digest, p.size), p.size, load)
+            except FileNotFoundError:
+                raise HTTPException(404, "Fotografia inexistente") from None
+            return EvidenceResponse(lease, start, end-start+1, p.mime, headers, 206 if span else 200)
+        finally:
+            # Sending bytes over a slow connection must not occupy the DB pool.
+            db.close()
 
     class ExportFileResponse(StreamingResponse):
         """Close the spool even if sending headers fails before iteration starts."""
 
-        def __init__(self, source, size):
+        def __init__(self, source, size, identifier):
             self.source = source
             super().__init__(
                 file_chunks(source),
                 media_type="application/zip",
-                headers={"Content-Length": str(size)},
+                headers={"Content-Length": str(size),
+                         "Content-Disposition": content_disposition(identifier, "zip")},
             )
 
         async def __call__(self, scope, receive, send):
@@ -1115,7 +1367,8 @@ def create_app(url=None, bootstrap=True):
     def closed_export_report(db, user, rid):
         report_access(db, user, rid)
         # Closed reports are immutable. A shared row lock on PostgreSQL prevents
-        # administrative deletion until the document/archive is fully built.
+        # administrative deletion until metadata and original bytes are staged.
+        # PDF rendering/ZIP assembly use that detached snapshot, without row locks.
         report = db.scalar(
             select(Report)
             .where(Report.id == rid)
@@ -1128,23 +1381,45 @@ def create_app(url=None, bootstrap=True):
             raise HTTPException(409, "Conclua o report antes de exportar PDF ou ZIP.")
         return report
 
-    # Metadata now, image bytes only while that photograph is rendered or archived:
-    # one BLOB in memory at a time instead of every photograph of the report.
+    # Stage originals one BLOB at a time, then retain only metadata/private paths
+    # while rendering. Never keep every photograph of the report in memory.
     class ExportPhoto:
-        def __init__(self, db, row):
+        def __init__(self, db, row, cache=None):
             self._db = db
             self.id = row.id
             self.checkpoint = row.checkpoint
             self.filename = row.filename
             self.mime = row.mime
+            self._cached_path = Path(cache) / hashlib.sha256(self.id.encode()).hexdigest() if cache else None
+
+        @property
+        def source_path(self):
+            if self._cached_path is not None and not self._cached_path.exists():
+                if self._db is None:
+                    # Never reopen a closed Session after releasing the snapshot
+                    # locks: the original may already have been replaced/deleted.
+                    raise MissingEvidence("Evidência temporária em falta durante a exportação; tente novamente")
+                data = self._db.scalar(select(Photo.data).where(Photo.id == self.id))
+                if data is None:
+                    raise MissingEvidence("Fotografia em falta durante a exportação; tente novamente")
+                self._cached_path.write_bytes(data)
+            return self._cached_path
 
         @property
         def data(self):
+            if self._cached_path is not None:
+                return self.source_path.read_bytes()
             return self._db.scalar(select(Photo.data).where(Photo.id == self.id))
 
-    def export_photos(db, rid):
+        def detach(self):
+            # Materialize one BLOB at a time while the source is still locked.
+            # Retain only paths/metadata during the potentially slow PDF worker.
+            self.source_path
+            self._db = None
+
+    def export_photos(db, rid, cache=None):
         return [
-            ExportPhoto(db, row)
+            ExportPhoto(db, row, cache)
             for row in db.execute(
                 select(Photo.id, Photo.checkpoint, Photo.filename, Photo.mime)
                 .where(Photo.report_id == rid)
@@ -1152,14 +1427,29 @@ def create_app(url=None, bootstrap=True):
             )
         ]
 
+    def export_snapshot(db, user, rid, cache):
+        """Freeze one consistent export, then release DB locks before rendering."""
+        try:
+            report = closed_export_report(db, user, rid)
+            document = report_json(db, report)
+            photos = export_photos(db, rid, cache)
+            for photo in photos:
+                photo.detach()
+            return document, photos
+        finally:
+            # Corrections, branding changes and account operations must not wait
+            # for the renderer, ZIP assembly or a slow device receiving bytes.
+            db.close()
+
     # Render from the stored report snapshot and checklist, not today's imported charger details.
     @app.get("/api/reports/{rid}/pdf")
     def pdf(rid: str, _slot=Depends(export_admission), u=Depends(user_dep), db=Depends(db_dep)):
         from .pdf_report import build_pdf
 
-        r = closed_export_report(db, u, rid)
         try:
-            document = build_pdf(report_json(db, r), export_photos(db, rid))
+            with TemporaryDirectory(prefix="lem-pdf-") as cache:
+                doc, photos = export_snapshot(db, u, rid, cache)
+                document = build_pdf(doc, photos)
         except MissingEvidence as error:
             raise HTTPException(409, str(error))
         finally:
@@ -1167,7 +1457,7 @@ def create_app(url=None, bootstrap=True):
         return Response(
             document,
             media_type="application/pdf",
-            headers={"Content-Disposition": f'attachment; filename="report-{rid}.pdf"'},
+            headers={"Content-Disposition": content_disposition(doc["identifier"], "pdf")},
         )
 
     # ZIP contains PDF, report JSON and original image bytes arranged by checkpoint.
@@ -1175,12 +1465,13 @@ def create_app(url=None, bootstrap=True):
     def bundle(rid: str, _slot=Depends(export_admission), u=Depends(user_dep), db=Depends(db_dep)):
         from .pdf_report import build_pdf
 
-        r = closed_export_report(db, u, rid)
         spool = SpooledTemporaryFile(max_size=16 * 1024 * 1024)
         try:
-            doc = report_json(db, r)
-            photos = export_photos(db, rid)
-            size = write_bundle(spool, doc, photos, build_pdf(doc, photos))
+            # Fetch each original from the DB once; the PDF worker and ZIP reuse
+            # the detached snapshot even if a correction replaces the source.
+            with TemporaryDirectory(prefix="lem-bundle-") as cache:
+                doc, photos = export_snapshot(db, u, rid, cache)
+                size = write_bundle(spool, doc, photos, build_pdf(doc, photos))
         except MissingEvidence as error:
             spool.close()
             raise HTTPException(409, str(error))
@@ -1191,6 +1482,6 @@ def create_app(url=None, bootstrap=True):
             # The remaining response reads only the generated file. A slow client
             # must not retain a database connection or the report's shared lock.
             db.close()
-        return ExportFileResponse(spool, size)
+        return ExportFileResponse(spool, size, doc["identifier"])
 
     return app

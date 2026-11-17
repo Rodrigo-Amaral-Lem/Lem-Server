@@ -88,6 +88,9 @@ def test_manual_ok_nok_cannot_replace_reading(setup,key,value):
     r=c.put('/api/reports/'+rid,headers=h,json=body)
     assert r.status_code==422,r.text
     assert key in r.text
+    # MAN.18 now requires photographic evidence for applicable readings.
+    if key == 'MAN.18':
+        photo(c, h, rid, key)
     body['payload']['answers'][key]={'value':'30 mA' if key=='MAN.12' else '120 Ω','assessment':value,'notes':'Teste efetuado'}
     r=c.put('/api/reports/'+rid,headers=h,json=body)
     assert r.status_code==200,r.text

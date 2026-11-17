@@ -17,6 +17,7 @@ def test_assessment_cannot_replace_manual_value(setup,key,status):
         r=c.put('/api/reports/'+rid,headers=h,json=body)
         assert r.status_code==422 and key in r.text,r.text
     body['payload']['answers'][key]={'value':'600,5 MΩ','assessment':status,'notes':'Teste efetuado'}
+    photo(c,h,rid,key)
     r=c.put('/api/reports/'+rid,headers=h,json=body)
     assert r.status_code==200,r.text
     assert r.json()['payload']['answers'][key]==body['payload']['answers'][key]
@@ -28,6 +29,9 @@ def test_na_exempts_reading_and_nok_needs_notes(setup,key):
     r=c.put('/api/reports/'+rid,headers=h,json=body)
     assert r.status_code==422 and 'observação' in r.text
     body['payload']['answers'][key]={'value':'NA','notes':''}
+    rejected=c.put('/api/reports/'+rid,headers=h,json=body)
+    assert rejected.status_code==422 and 'observação' in rejected.text
+    body['payload']['answers'][key]['notes']='Ensaio não aplicável ao equipamento'
     assert c.put('/api/reports/'+rid,headers=h,json=body).status_code==200
 
 @pytest.mark.parametrize('key',['SITE.02','SITE.03','SITE.04'])
@@ -59,11 +63,12 @@ def test_pdf_preserves_reading_and_assessment(setup):
     from pypdf import PdfReader
     c,h,rid,body=report(setup)
     body['payload']['answers']['MAN.14']={'value':'600,5 MΩ','assessment':'OK','notes':''}
+    photo(c,h,rid,'MAN.14')
     assert c.put('/api/reports/'+rid,headers=h,json=body).status_code==200
     response=c.get('/api/reports/'+rid+'/pdf',headers=h)
     assert response.status_code==200
-    text=''.join(page.extract_text() for page in PdfReader(BytesIO(response.content)).pages)
-    assert '600,5' in text and '· OK' in text
+    text=''.join(page.extract_text(extraction_mode="layout") for page in PdfReader(BytesIO(response.content)).pages)
+    assert '600,5 MΩ' in text and 'Avaliação: OK' in text
 
 @pytest.mark.parametrize('value',['','OK','NOK','NA','30 mA'])
 def test_trip_reading_and_photo_required_when_applicable(setup,value):
@@ -76,7 +81,7 @@ def test_trip_reading_and_photo_required_when_applicable(setup,value):
     response=c.put('/api/reports/'+rid,headers=h,json=body)
     assert response.status_code==(200 if value=='NA' else 422),response.text
     if value=='NA': return
-    assert 'fotografia' in response.text,response.text
+    assert ('algarismos' if value in ('', 'OK', 'NOK') else 'fotografia') in response.text,response.text
     photo(c,h,rid,'MAN.12')
     response=c.put('/api/reports/'+rid,headers=h,json=body)
     assert response.status_code==(422 if value in ('','OK','NOK') else 200),response.text

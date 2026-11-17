@@ -13,7 +13,7 @@
   {
     "input": "Mennekes Type 2; CCS2; CHAdeMO",
     "names": [
-      "Mennekes Type 2",
+      "AC Type 2",
       "CCS2",
       "CHAdeMO"
     ]
@@ -23,7 +23,7 @@
     "names": [
       "CCS2",
       "CCS2",
-      "Mennekes Type 2"
+      "AC Type 2"
     ]
   },
   {
@@ -43,7 +43,7 @@
     "names": [
       "CCS",
       "CCS2",
-      "Mennekes Type 2"
+      "AC Type 2"
     ]
   },
   {
@@ -58,9 +58,9 @@
   {
     "input": "3×Mennekes",
     "names": [
-      "Mennekes Type 2",
-      "Mennekes Type 2",
-      "Mennekes Type 2"
+      "AC Type 2",
+      "AC Type 2",
+      "AC Type 2"
     ]
   },
   {
@@ -91,7 +91,7 @@
     "input": "CCS2, N/A; T2",
     "names": [
       "CCS2",
-      "Mennekes Type 2"
+      "AC Type 2"
     ]
   },
   {
@@ -111,6 +111,27 @@
     "input": "CCS2; 2x N/A; NA x3",
     "names": [
       "CCS2"
+    ]
+  },
+  {
+    "input": "2x AC Type 2 / Mennekes Type 2",
+    "names": [
+      "AC Type 2",
+      "AC Type 2",
+      "AC Type 2"
+    ],
+    "labels": [
+      "Teste de carga do conector AC Type 2 #1",
+      "Teste de carga do conector AC Type 2 #2",
+      "Teste de carga do conector AC Type 2 #3"
+    ]
+  },
+  {
+    "input": "ac type 2; AC Tipo 2; T2",
+    "names": [
+      "AC Type 2",
+      "AC Type 2",
+      "AC Type 2"
     ]
   }
 ]

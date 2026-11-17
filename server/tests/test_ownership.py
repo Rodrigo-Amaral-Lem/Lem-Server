@@ -9,7 +9,7 @@ from io import BytesIO
 from PIL import Image
 from sqlalchemy import select
 from app.models import OwnershipTransfer, Report
-from test_workflow import setup, upload, answers
+from test_workflow import setup, upload, answers, add_signature
 
 
 def test_owner_transfer_and_offline_revocation(setup):
@@ -58,6 +58,15 @@ def test_owner_transfer_and_offline_revocation(setup):
     # An administrator must explicitly take ownership before modifying/closing.
     assert c.put(url, headers=admin, json={**body, "base_revision": 1}).status_code == 403
     assert attach(admin, 1).status_code == 403
+    for observer in (admin, hb):
+        for state in ('draft', 'closed'):
+            assert c.put(url, headers=observer, json={**body, 'base_revision': 1, 'status': state}).status_code == 403
+        assert attach(observer, 1).status_code == 403
+        assert c.delete(photo + '?base_revision=1', headers=observer).status_code == 403
+        observed = c.get(url, headers=observer).json()
+        assert observed['status'] == 'draft' and observed['owner_id'] == a
+        assert observed['revision'] == 1
+
     owners = c.get(url + "/owners", headers=admin).json()
     assert (
         a in [u["id"] for u in owners]
@@ -102,14 +111,30 @@ def test_owner_transfer_and_offline_revocation(setup):
         ).status_code
         == 409
     )
-    assert (
-        c.put(url, headers=ha, json={**body, "base_revision": 3, "status": "closed"}).status_code
-        == 200
-    )
+    add_signature(c, ha, rid, body["payload"], revision=3)
+    # Owner closure and an observer's stale upload can arrive simultaneously.
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    gate = Barrier(2)
+    def concurrent_write(headers, state):
+        gate.wait(timeout=10)
+        return c.put(url, headers=headers, json={**body, "base_revision": 3, "status": state})
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        closed = pool.submit(concurrent_write, ha, "closed")
+        stale = pool.submit(concurrent_write, hb, "draft")
+        assert closed.result().status_code == 200
+        assert stale.result().status_code == 403
+
     assert (
         c.post(url + "/owner", headers=admin, json={"owner_id": b, "base_revision": 4}).status_code
         == 409
     )
+    for observer in (admin, hb):
+        observed = c.get(url, headers=observer).json()
+        assert observed['status'] == 'closed' and observed['owner_id'] == a
+        summary = next(row for row in c.get(f'/api/contracts/{cid}/chargers', headers=observer).json()[0]['reports'] if row['id'] == rid)
+        assert summary['status'] == observed['status'] and summary['revision'] == observed['revision']
+        assert c.put(url, headers=observer, json={**body, 'base_revision': 4}).status_code == 403
     with app.state.factory() as db:
         history = list(
             db.scalars(

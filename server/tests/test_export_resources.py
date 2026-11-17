@@ -15,7 +15,7 @@ import pytest
 from app.exports import MissingEvidence, write_bundle
 from app.images import inspect_image
 from app.pdf_report import build_pdf
-from test_workflow import setup, upload, answers
+from test_workflow import setup, upload, answers, add_signature
 from test_bug_regressions import _report, _jpeg
 
 
@@ -54,17 +54,24 @@ def make_report(client, headers, contract, closed=False):
     upload(client, headers, contract["id"], True)
     charger = client.get(f'/api/contracts/{contract["id"]}/chargers', headers=headers).json()[0]
     rid = str(uuid.uuid4())
+    payload = {"answers": answers()}
     result = client.put(
         f"/api/reports/{rid}",
         headers=headers,
         json={
             "checklist_version": TEMPLATE["version"], "charger_id": charger["id"],
             "base_revision": 0,
-            "status": "closed" if closed else "draft",
-            "payload": {"answers": answers()},
+            "status": "draft",
+            "payload": payload,
         },
     )
     assert result.status_code == 200, result.text
+    if closed:
+        add_signature(client, headers, rid, payload)
+        result = client.put(f"/api/reports/{rid}", headers=headers, json={
+            "checklist_version": TEMPLATE["version"], "charger_id": charger["id"],
+            "base_revision": 1, "status": "closed", "payload": payload})
+        assert result.status_code == 200, result.text
     return rid
 
 
@@ -106,7 +113,9 @@ def test_busy_admission_does_not_acquire_another_connection(tmp_path, monkeypatc
             assert entered.wait(5)
             busy = request()
             assert busy.status_code == 503 and busy.headers["retry-after"] == "15"
-            assert engine.pool.checkedout() == 1
+            # Rendering owns a detached snapshot; photo validation still owns
+            # its write transaction until the accepted upload is committed.
+            assert engine.pool.checkedout() == (0 if operation == "export" else 1)
         finally:
             release.set()
         assert active.result(timeout=10).status_code == 200

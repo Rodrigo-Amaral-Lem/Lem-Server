@@ -4,7 +4,7 @@
 FROM python:3.12-slim
 WORKDIR /srv
 COPY server/requirements.txt ./requirements.txt
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir -r requirements.txt && useradd --create-home lem
 COPY server /srv/server
 COPY shared /srv/shared

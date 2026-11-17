@@ -72,6 +72,13 @@ def test_confirmation_authorization_and_exact_restore(setup):
         base_revision=2, payload={"answers": {}})).status_code == 423
     assert c.put(f"/api/reports/{uuid.uuid4()}", headers=h, json=dict(checklist_version=TEMPLATE["version"],charger_id=charger,
         base_revision=0, payload={"answers": {}})).status_code == 423
+    # Neither an existing session nor closing a report can bypass retention.
+    for headers in (h, th):
+        assert c.get(f"/api/reports/{rid}/exists", headers=headers).status_code == 423
+        assert c.get(f"/api/reports/{rid}/photos/{pid}", headers={**headers,"Range":"bytes=0-3"}).status_code == 423
+        assert c.put(f"/api/reports/{rid}",headers=headers,json=dict(
+            checklist_version=TEMPLATE["version"],charger_id=charger,base_revision=original['revision'],
+            status="closed",payload=original['payload'])).status_code == 423
     assert c.delete(f"/api/reports/{rid}?base_revision=2", headers=h).status_code == 423
     assert c.delete(f"/api/reports/{rid}/photos/{pid}?base_revision=2", headers=h).status_code == 423
     assert c.put(f"/api/reports/{rid}/photos/{uuid.uuid4()}", headers=h,
@@ -158,7 +165,7 @@ def test_existing_database_upgrade_adds_only_retention_table(setup):
     ContractTrash.__table__.drop(engine)
     from app.main import create_app
     upgraded=create_app(str(engine.url),bootstrap=False)
-    with TestClient(upgraded,headers={"X-Lem-Client-Version":"0.2.0"}) as live:
+    with TestClient(upgraded,headers={"X-Lem-Client-Version":"0.2.6"}) as live:
         assert live.get(f"/api/reports/{rid}",headers=h).status_code == 200
         assert trash(live,h,cid).status_code == 200
         assert live.post(f"/api/contracts/{cid}/restore",headers=h).status_code == 200

@@ -9,6 +9,8 @@ from types import SimpleNamespace
 import subprocess
 import pytest
 
+pytest.importorskip("fcntl", reason="Server uninstallation requires POSIX file locking")
+
 spec = importlib.util.spec_from_file_location("uninstall", Path(__file__).parents[1] / "uninstall-server.py")
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)

@@ -16,12 +16,12 @@ STATIONS_COLUMNS = [
     ("E", "longitude", "Longitude", False),
     ("F", "region", "CCDR", True),
     ("G", "cpe", "CPE Associado", False),
-    ("H", "energy_supply", "Fornecimento de Energia", True),
-    ("I", "serial", "Nº(s) Série", True),
+    ("H", "energy_supply", "Fornecimento de Energia", False),
+    ("I", "serial", "Nº(s) Série", False),
     ("J", "manufacturer", "Fabricante", True),
-    ("K", "model", "Modelo", True),
-    ("L", "power", "Potência (kVA)", True),
-    ("M", "power_limit", "Limitação de Potência (kVA)", True),
+    ("K", "model", "Modelo", False),
+    ("L", "power", "Potência (kVA)", False),
+    ("M", "power_limit", "Limitação de Potência (kVA)", False),
     ("N", "connectors", "Tomadas / Fichas", True),
 ]
 FIELDS = [

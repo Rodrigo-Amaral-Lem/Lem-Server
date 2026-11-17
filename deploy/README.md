@@ -11,7 +11,7 @@ source-checkout guidance is in [Deployment](../docs/deployment.md) and
 | --- | --- | --- |
 | [deploy.ps1](deploy.ps1) | Windows PowerShell 5.1+/PowerShell 7 workstation; SSH destination, optional key/target/domain | Packages `server/shared/deploy`, transfers by SSH and updates the selected remote installation; `-PackageOnly FILE` avoids SSH |
 | [deploy.sh](deploy.sh) | Bash workstation with Python 3 and SSH/SCP; `--help` lists flags | Same update pipeline; `--package-only FILE` writes only a payload; `--reset-database` is explicitly destructive |
-| [install-ubuntu.sh](install-ubuntu.sh) | Fresh Ubuntu 24.04/26.04 host; non-root account with sudo, DNS/domain and free 80/443 | Installs/checks host dependencies, generates `.env`/credentials, changes firewall rules, creates volumes and starts services |
+| [install-ubuntu.sh](install-ubuntu.sh) | Fresh Ubuntu 24.04/26.04 host; `--user USER` (default: current login), non-root account with sudo, DNS/domain and free 80/443 | Checks the selected login, installs/checks host dependencies, generates `.env`/credentials, changes firewall rules, creates volumes and starts services |
 | [manage-server.sh](manage-server.sh) | Installed host with Docker access and `deploy/.env`; pass `help` or admin commands | Runs `app.admin_cli` inside the API container; commands can change accounts, ownership and catalogue data |
 | [backup.sh](backup.sh) | Installed host with running database container | Private custom PostgreSQL dump under `deploy/backups`; includes database-stored evidence, not `.env`/TLS volumes |
 | [uninstall-server.sh](uninstall-server.sh) | Installed Linux host; forwards arguments to Python | Default preview; explicit `--stop`/`--purge` follow [UNINSTALL.md](UNINSTALL.md) |
@@ -20,6 +20,14 @@ source-checkout guidance is in [Deployment](../docs/deployment.md) and
 Default SSH destination is `lem@lem.rodrod.pt:22`; automatic target discovery is limited to an
 unambiguous installation under `~/apps`. An explicit domain selects/asserts an existing
 installation, not a hostname migration. Keep live configuration and backups private.
+
+For another Linux account use `deploy.sh --user rodrigo_lem` or
+`deploy.ps1 -UserName rodrigo_lem`; for first installation log in as that account and run
+`bash deploy/install-ubuntu.sh --user rodrigo_lem`. The installer defaults to the current
+login and refuses a mismatched `--user`; it does not create or switch Linux accounts.
+Host-side backup/administration/removal helpers use the invoking account and selected
+installation, not a hard-coded SSH login. PostgreSQL and container identities named `lem`
+are internal and remain unchanged. See the source [backup transfer procedure](../docs/administration.md#move-a-backup-to-a-new-server).
 
 ## Internal helpers
 

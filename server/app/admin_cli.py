@@ -31,6 +31,7 @@ from .models import (
     Assignment,
     Charger,
     Report,
+    ReportCorrection,
     DeletedReport,
     OwnershipTransfer,
     Photo,
@@ -40,6 +41,7 @@ from .models import (
 from .security import hash_password
 from .contract_trash import RETENTION, utc_now, purge_contract
 from .checklist import for_charger
+from .corrections import lock_charger, lock_report_users
 
 ACTIVE = ("admin", "tech")
 
@@ -97,10 +99,11 @@ def active_contract(db, cid, allow_trash=False, write=True):
 
 
 def locked_report(db, rid):
+    lock_report_users(db, rid)
     r = need(db, Report, rid)
     charger = need(db, Charger, r.charger_id)
     active_contract(db, charger.contract_id, allow_trash=True)
-    db.scalar(select(Charger).where(Charger.id == charger.id).with_for_update())
+    lock_charger(db, charger.id)
     r = db.scalar(
         select(Report)
         .where(Report.id == rid)
@@ -380,7 +383,10 @@ def report_commands(db, args):
         db.rollback()
     owner = account(db, args.owner, lock="read") if args.action == "owner" else None
     r = locked_report(db, args.report)
+    correction = db.get(ReportCorrection, r.id)
     if args.action == "owner":
+        if correction and correction.state == "editing":
+            raise ValueError("Cópia de correção em curso: cancele a cópia antes de transferir a propriedade")
         cid = need(db, Charger, r.charger_id).contract_id
         if owner.role == "tech" and not db.get(Assignment, (owner.id, cid)):
             if not args.assign_access:
@@ -408,6 +414,16 @@ def report_commands(db, args):
             raise ValueError(
                 "Report alterado durante a confirmação; consulte a versão atual e confirme novamente"
             )
+        if db.scalar(select(ReportCorrection.id).where(ReportCorrection.source_id == r.id,
+                ReportCorrection.state == "editing").limit(1)):
+            raise ValueError("Existe uma correção em curso; cancele/apague a cópia antes de apagar o original")
+        claimed = db.execute(update(Report).where(Report.id == r.id, Report.revision == confirmed_revision,
+            Report.status == confirmed_status).values(revision=confirmed_revision+1)
+            .execution_options(synchronize_session=False))
+        if claimed.rowcount != 1:
+            raise ValueError("Report alterado durante a remoção; dados conservados")
+        if correction and correction.state == "editing":
+            correction.state = "cancelled"
         db.execute(delete(Photo).where(Photo.report_id == r.id))
         db.add(
             DeletedReport(id=r.id, charger_id=r.charger_id, owner_id=r.owner_id, status=r.status)

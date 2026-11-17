@@ -38,9 +38,11 @@ def get_or_create_station(db, external_id, details, existing=None):
     return station
 
 
-def close_identity(db, charger, report, payload, actor_id):
+def close_identity(db, charger, report, payload, actor_id, *, correcting_closed=False):
     snapshot = deepcopy(report.snapshot)
-    if report.template.get('version', 0) < 4:
+    # Explicit administrator corrections also support historical templates whose
+    # EST identity fields predate automatic station updates on ordinary closure.
+    if report.template.get('version', 0) < 4 and not correcting_closed:
         return snapshot
     changes = {}
     original = snapshot.get('charger', {})

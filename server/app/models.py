@@ -73,6 +73,21 @@ class Contract(Base):
 
 
 # Separate table permits a non-destructive upgrade of existing installations.
+# Brand artwork is retained independently of future catalogue updates.
+class ContractBranding(Base):
+    __tablename__ = "contract_branding"
+    contract_id: Mapped[str] = mapped_column(ForeignKey("contracts.id"), primary_key=True)
+    logos: Mapped[list] = mapped_column(JSON)
+
+
+class ContractReportStyle(Base):
+    """Presentation settings have their own revision, independent of report answers."""
+    __tablename__ = "contract_report_styles"
+    contract_id: Mapped[str] = mapped_column(ForeignKey("contracts.id"), primary_key=True)
+    issuer: Mapped[str] = mapped_column(String(20), default="Lem")
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+
+
 # Active contracts have no row here. All dependent data stays in place until expiry.
 class ContractTrash(Base):
     __tablename__ = "contract_trash"
@@ -148,6 +163,22 @@ class Report(Base):
     started: Mapped[str] = mapped_column(String(50), default=now)
     updated: Mapped[str] = mapped_column(String(50), default=now)
     finished: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
+
+# Independent correction history survives source deletion and records replacement links.
+class ReportCorrection(Base):
+    __tablename__ = "report_corrections"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    contract_id: Mapped[str] = mapped_column(ForeignKey("contracts.id"), index=True)
+    source_id: Mapped[str] = mapped_column(String(36), index=True)
+    source_revision: Mapped[int] = mapped_column(Integer)
+    editor_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    original_owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    state: Mapped[str] = mapped_column(String(12), default="editing")
+    photo_map: Mapped[dict] = mapped_column(JSON)
+    commit_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created: Mapped[str] = mapped_column(String(50), default=now)
+    committed: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
 
 # Permanent deletion tombstone prevents a stale device from recreating this UUID.

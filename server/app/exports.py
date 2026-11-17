@@ -7,6 +7,7 @@
 
 from zipfile import ZipFile, ZIP_DEFLATED, ZIP_STORED
 import json
+from .report_naming import report_identifier
 
 CHUNK = 1024 * 1024
 
@@ -16,23 +17,29 @@ class MissingEvidence(ValueError):
 
 
 def write_bundle(target, doc, photos, pdf_bytes):
-    """Write report.pdf, report.json and the original photographs into target.
+    """Write the named PDF, report.json and original photographs into target.
 
     photos need id, checkpoint, mime and data; data may be loaded lazily and may
     not be None: unavailable originals abort the entire export.
     Returns the archive size and leaves target positioned at its start.
     """
     with ZipFile(target, "w", ZIP_DEFLATED) as z:
-        z.writestr("report.pdf", pdf_bytes)
+        # Qt already compresses PDF images/fonts; avoid compressing them again.
+        z.writestr(report_identifier(doc) + ".pdf", pdf_bytes, compress_type=ZIP_STORED)
         z.writestr("report.json", json.dumps(doc, ensure_ascii=False, indent=2))
         for p in photos:
-            data = p.data
-            if data is None:
-                raise MissingEvidence("Fotografia em falta durante a exportação; tente novamente")
             ext = {"image/jpeg": "jpg", "image/png": "png", "video/mp4": "mp4", "video/3gpp": "3gp"}[p.mime]
             folder = "videos" if p.mime.startswith("video/") else "fotografias"
-            # JPEG/PNG are already compressed: storing them saves CPU for no size loss.
-            z.writestr(f"{folder}/{p.checkpoint}/{p.id}.{ext}", data, compress_type=ZIP_STORED)
+            name = f"{folder}/{p.checkpoint}/{p.id}.{ext}"
+            source = getattr(p, "source_path", None)
+            # Reuse PDF staging in bounded blocks; JPEG/PNG/video are already compressed.
+            if source is not None:
+                z.write(source, name, compress_type=ZIP_STORED)
+            else:
+                data = p.data
+                if data is None:
+                    raise MissingEvidence("Fotografia em falta durante a exportação; tente novamente")
+                z.writestr(name, data, compress_type=ZIP_STORED)
     size = target.tell()
     target.seek(0)
     return size

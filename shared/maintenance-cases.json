@@ -1,0 +1,162 @@
+[
+  {
+    "configured": "100",
+    "trip": "49",
+    "earth": "500",
+    "trip_state": "NOK",
+    "earth_state": "OK",
+    "earth_note": "high"
+  },
+  {
+    "configured": "100",
+    "trip": "50",
+    "earth": "500",
+    "trip_state": "NOK",
+    "earth_state": "OK",
+    "earth_note": "high"
+  },
+  {
+    "configured": "100",
+    "trip": "51",
+    "earth": "500",
+    "trip_state": "OK",
+    "earth_state": "OK",
+    "earth_note": "high"
+  },
+  {
+    "configured": "100",
+    "trip": "104",
+    "earth": "500",
+    "trip_state": "OK",
+    "earth_state": "OK",
+    "earth_note": "high"
+  },
+  {
+    "configured": "100",
+    "trip": "105",
+    "earth": "500",
+    "trip_state": "NOK",
+    "earth_state": "OK",
+    "earth_note": "high"
+  },
+  {
+    "configured": "100",
+    "trip": "106",
+    "earth": "500",
+    "trip_state": "NOK",
+    "earth_state": "OK",
+    "earth_note": "high"
+  },
+  {
+    "configured": "30",
+    "trip": "15",
+    "earth": "1666.66",
+    "trip_state": "NOK",
+    "earth_state": "OK",
+    "earth_note": "high"
+  },
+  {
+    "configured": "30",
+    "trip": "16",
+    "earth": "1666.67",
+    "trip_state": "OK",
+    "earth_state": "NOK",
+    "earth_note": "fail"
+  },
+  {
+    "configured": "1000",
+    "trip": "900",
+    "earth": "49.99",
+    "trip_state": "OK",
+    "earth_state": "OK",
+    "earth_note": ""
+  },
+  {
+    "configured": "1000",
+    "trip": "900",
+    "earth": "50",
+    "trip_state": "OK",
+    "earth_state": "OK",
+    "earth_note": ""
+  },
+  {
+    "configured": "1000",
+    "trip": "900",
+    "earth": "50.01",
+    "trip_state": "OK",
+    "earth_state": "NOK",
+    "earth_note": "fail"
+  },
+  {
+    "configured": "300",
+    "trip": "200",
+    "earth": "50.01",
+    "trip_state": "OK",
+    "earth_state": "OK",
+    "earth_note": "high"
+  },
+  {
+    "configured": "100000",
+    "trip": "90000",
+    "earth": "0.5",
+    "trip_state": "OK",
+    "earth_state": "OK",
+    "earth_note": ""
+  },
+  {
+    "configured": "999999",
+    "trip": "999999",
+    "earth": "0.05",
+    "trip_state": "OK",
+    "earth_state": "OK",
+    "earth_note": ""
+  },
+  {
+    "configured": "999999",
+    "trip": "999999",
+    "earth": "0.06",
+    "trip_state": "OK",
+    "earth_state": "NOK",
+    "earth_note": "fail"
+  },
+  {
+    "configured": "0",
+    "trip": "0",
+    "earth": "99999.99",
+    "trip_state": "",
+    "earth_state": "",
+    "earth_note": ""
+  },
+  {
+    "configured": "NA",
+    "trip": "25",
+    "earth": "60",
+    "trip_state": "",
+    "earth_state": "",
+    "earth_note": ""
+  },
+  {
+    "configured": "bad",
+    "trip": "25",
+    "earth": "60",
+    "trip_state": "",
+    "earth_state": "",
+    "earth_note": ""
+  },
+  {
+    "configured": "30",
+    "trip": "NA",
+    "earth": "40",
+    "trip_state": "",
+    "earth_state": "OK",
+    "earth_note": ""
+  },
+  {
+    "configured": "30",
+    "trip": "0",
+    "earth": "NA",
+    "trip_state": "NOK",
+    "earth_state": "",
+    "earth_note": ""
+  }
+]

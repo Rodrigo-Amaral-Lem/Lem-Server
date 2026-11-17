@@ -11,6 +11,17 @@ Use Python 3.12 (the container's runtime), a virtual environment and
 [server/requirements.txt](../server/requirements.txt). `ffprobe` from FFmpeg is required for video
 validation.
 
+PDFs now use the same Qt 6.12 renderer and bundled DejaVu fonts as the application.
+Install `PySide6-Essentials==6.12.0` from the requirements and ship the complete
+`shared/report/` directory. On Debian/Ubuntu, the offscreen worker needs `libegl1`,
+`libgl1`, `libxkbcommon0`, `libfontconfig1` and `libdbus-1-3`; the Dockerfile installs
+them. It needs no display server and starts no visible Windows console. Rebuild
+the server container when updating from the previous ReportLab renderer.
+
+Existing contracts default to Lem. The additive `contract_report_styles` table is
+created automatically; it does not require a reset or rewriting report answers.
+Update the app and server together so offline and online PDFs share the same model.
+
 Example in PowerShell 7.1+, from the Server repository root:
 
 ```powershell
@@ -47,9 +58,10 @@ runs the API as user `lem`.
 | `LEM_DOMAIN` | Proxy hostname; default `lem.rodrod.pt` |
 | `POSTGRES_PASSWORD` | Required database password; installer generates URL-safe hex |
 | `ADMIN_EMAIL`, `ADMIN_NAME`, `ADMIN_PASSWORD` | Initial account only; password must have at least 12 characters |
-| `LEM_MIN_CLIENT_VERSION`, `LEM_LATEST_CLIENT_VERSION` | Admitted semantic-version interval; defaults are both `0.2.0` |
+| `LEM_MIN_CLIENT_VERSION`, `LEM_LATEST_CLIENT_VERSION` | Admitted version interval; defaults `0.2.5` / `0.2.5` |
 | `LEM_UPDATE_URL` | Optional HTTPS update/download instructions URL |
 | `LEM_EXPORT_CONCURRENCY`, `LEM_IMAGE_CONCURRENCY` | API admission slots; defaults 2/1, capped at 4/2 |
+| `LEM_DOWNLOAD_CONCURRENCY` | Simultaneous original-evidence responses per worker; default 8, capped at 16 |
 | `LEM_API_DOCS` | `1` enables public documentation/schema routes; default off |
 | `LEM_TLS_DATA_VOLUME`, `LEM_TLS_CONFIG_VOLUME` | Existing named certificate/configuration volumes; preserve on update |
 
@@ -57,6 +69,12 @@ Outside Compose, `DATABASE_URL` selects the database and `CHECKLIST_FILE` can ov
 path. Compose fixes these for its services. The example configuration is
 [deploy/.env.example](../deploy/.env.example); live `.env` files contain secrets and must not be
 committed or pasted into logs.
+
+Evidence download slots remain held until the response finishes, bounding in-flight BLOB memory;
+database connections are released before sending. Busy admission returns 503 with `Retry-After`.
+The app uses four evidence requests at once and retries temporary failures. Raising server slots
+increases memory demand (each original can be up to 60 MiB); it is not a bandwidth setting.
+Deploy the updated server for byte-range resume; updated clients safely restart against older servers.
 
 ## First installation — on the server
 
@@ -66,7 +84,7 @@ directory first. Confirm domain DNS and free ports 80/443.
 
 ```bash
 # From the installation root, on the server:
-bash deploy/install-ubuntu.sh
+bash deploy/install-ubuntu.sh --user rodrigo_lem
 ```
 
 The script detects Ubuntu, checks existing services/installation markers, prompts for the first
@@ -78,6 +96,39 @@ It intentionally refuses to generate a new `.env` over an existing database/inst
 the initial generated administrator password locally; record it securely. It can modify the host
 firewall, packages, Docker services and volumes, so it is a first-install tool rather than a routine
 update command.
+
+`--user` selects the expected **Linux installation account**; it defaults to the current login.
+Log in as that account first (for example `ssh rodrigo_lem@NEW_SERVER`), and do not use
+`sudo bash` for the installer. A different selected account is rejected before host changes.
+The account needs sudo rights and ownership of the installation directory, for example
+`/home/rodrigo_lem/apps/Lem`. Set `LEM_DOMAIN` when using a different hostname:
+
+```bash
+LEM_DOMAIN=lem.example.com bash deploy/install-ubuntu.sh --user rodrigo_lem
+```
+
+The SSH/Linux user, application administrator and PostgreSQL role are separate identities.
+Keep the internal database/container user `lem` in Compose and database commands; changing
+the host login does not require renaming it. To transfer an existing database, follow
+[Move a backup to a new server](administration.md#move-a-backup-to-a-new-server).
+The workstation deployment frontends update an existing installation; they do not perform
+the initial Ubuntu setup. Copy the Server source (`server/`, `shared/`, `deploy/` and
+`.dockerignore`, without a live `.env` or local caches) to the permanent destination first.
+
+Subsequent updates for this account use:
+
+```powershell
+& ./deploy/deploy.ps1 -ServerHost NEW_SERVER -UserName rodrigo_lem `
+  -RemotePath /home/rodrigo_lem/apps/Lem -Domain lem.example.com
+```
+
+```bash
+bash deploy/deploy.sh --host NEW_SERVER --user rodrigo_lem \
+  --remote-path /home/rodrigo_lem/apps/Lem --domain lem.example.com
+```
+
+Account selection is installation tooling only: no client protocol or database schema changes,
+so no client version increment or minimum-client increase is required.
 
 ## Update an existing installation — from a workstation
 
@@ -133,3 +184,12 @@ domain, preserved `.env`, SSH identity and service health before repeating an in
 deployment. Avoid printing a fully expanded Compose configuration containing secrets;
 `docker compose --env-file deploy/.env -f deploy/compose.yml config --quiet` validates without
 displaying it.
+
+### Upgrade to 0.3.0
+
+Deploy the matching app and server for checklist v7. Minimum/latest defaults are 0.2.6/0.3.0;
+old environment values cannot reduce the server's compiled compatibility floor. Existing closed
+reports remain readable; edits through desktop administrator correction use the current form.
+Preserve client storage during app installation so drafts and pending historical uploads survive.
+Compatible 0.2.6 clients may log in with an update notice. The consolidated 0.3.0 numbering does
+not introduce another schema/protocol change; update the server policy before the new app.

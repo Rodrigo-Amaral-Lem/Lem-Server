@@ -6,7 +6,7 @@ import re
 import os
 import pytest
 from pathlib import Path
-from app.compatibility import ClientPolicy, VERSION
+from app.compatibility import ClientPolicy, VERSION, MINIMUM_CLIENT
 
 
 def test_app_and_server_release_are_aligned(monkeypatch):
@@ -20,9 +20,12 @@ def test_app_and_server_release_are_aligned(monkeypatch):
     assert f"image: lem-api:{version}" in (root / "deploy/compose.yml").read_text()
     assert f'setApplicationVersion("{version}")' in (app_root / "app/src/main.cpp").read_text()
     assert f'QT_ANDROID_VERSION_NAME "{version}"' in cmake
+    assert 'QT_ANDROID_VERSION_CODE 178' in cmake
     for name in [".env.example", "install-ubuntu.sh"]:
         assert f"LEM_LATEST_CLIENT_VERSION={version}" in (root / "deploy" / name).read_text()
+        assert f"LEM_MIN_CLIENT_VERSION={MINIMUM_CLIENT}" in (root / "deploy" / name).read_text()
     assert f"LEM_LATEST_CLIENT_VERSION:-{version}" in (root / "deploy/compose.yml").read_text()
+    assert f"LEM_MIN_CLIENT_VERSION:-{MINIMUM_CLIENT}" in (root / "deploy/compose.yml").read_text()
     monkeypatch.delenv("LEM_MIN_CLIENT_VERSION", raising=False)
     monkeypatch.delenv("LEM_LATEST_CLIENT_VERSION", raising=False)
     monkeypatch.delenv("LEM_UPDATE_URL", raising=False)

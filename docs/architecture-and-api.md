@@ -65,7 +65,10 @@ are enabled only when `LEM_API_DOCS=1`.
 | POST `/api/login`, `/api/logout` | Start/revoke a session |
 | GET `/api/template` | Initial shared checklist |
 | GET/POST `/api/users` | Administrator account listing/creation |
+| PUT `/api/users/{user_id}/password` | Administrator resets a technician's password and revokes all their sessions |
 | GET/POST `/api/contracts` | Visible contracts / administrator creation |
+| PUT `/api/contracts/{cid}/presentation` | Administrator issuer/client-logo update with `base_revision` |
+| GET `/api/contracts/{cid}/presentation` | Current authorized contract presentation before online export |
 | PUT `/api/contracts/{cid}/users/{user_id}` | Assign access |
 | GET `/api/admin/deleted-contracts`; POST `/api/contracts/{cid}/trash`, `/restore` | Contract trash workflow |
 | GET `/api/contracts/{cid}/chargers` | Lightweight catalogue and report summaries |
@@ -75,6 +78,8 @@ are enabled only when `LEM_API_DOCS=1`.
 | PUT `/api/reports/{rid}` | Revision-checked create/update/close |
 | GET `/api/reports/{rid}/owners`; POST `/api/reports/{rid}/owner` | Ownership candidates and transfer |
 | DELETE `/api/reports/{rid}` | Revision-checked permanent report deletion |
+| POST `/api/reports/{rid}/corrections` | Desktop administrator begins an independent working copy (`id`, `base_revision`) |
+| POST `/api/reports/{rid}/correction/commit` | Validate and atomically replace the closed source using a full ReportInput |
 | PUT/GET/DELETE `/api/reports/{rid}/photos/{pid}` | Evidence bytes and removals |
 | GET `/api/reports/{rid}/pdf`, `/api/reports/{rid}/bundle` | Export an eligible closed report |
 
@@ -83,6 +88,11 @@ are enabled only when `LEM_API_DOCS=1`.
 A report PUT includes `checklist_version`, `charger_id`, `base_revision`, `status` and `payload`
 ; connector metadata may also be supplied for new work. A new report begins at base revision zero.
 Existing reports must match their saved checklist version, charger and known revision.
+
+Only the current owner may update answers/evidence or close a report, including when the caller
+is an administrator. Report writes lock the row before validating closure, serializing against
+evidence changes and ownership transfers. Catalogue summaries include the report revision so
+clients can distinguish server changes from stale cached drafts.
 
 Draft writes accept incomplete answers while still validating shapes, identifiers and provided
 signature/copy metadata. Closure additionally checks required values, separate assessments,
@@ -100,11 +110,72 @@ final closure request, so a closed local report is normally sent as draft → ev
 
 ## Export and background work
 
-PDF/ZIP rendering uses the saved report context, not today's catalogue. Required files must exist;
+PDF/ZIP rendering uses the saved report answers/identity and the contract's current presentation.
+`presentation` contains `issuer` (`Lem`/`CSMTEC`), `client_logos` (0–2 artwork entries),
+and its own `revision`; it appears in contract and full-report responses. Settings writes require
+administrator access and the contract write lock. Stale `base_revision` returns 409. Exports hold
+the contract read lock on PostgreSQL only while staging their snapshot. Atomic revision updates and a single joined
+presentation read also prevent lost edits or mixed issuer/client logos on SQLite.
+Required files must exist;
 missing evidence is reported rather than silently omitted. PDF is returned as bytes; ZIP output uses
-a spooled file and releases the DB session before the slow response stream. Export/image admission
-slots fail fast with 503 instead of holding scarce database connections while waiting.
+a spooled file. Both exports copy metadata and originals into private temporary storage under
+the source locks, then release the DB session **before** the PDF worker and ZIP assembly.
+Each original is read from the database once; PDF and archive output reuse the staged file.
+An accepted export can therefore finish with its original content/presentation even if an
+administrator commits a correction or changes branding during rendering. A detached export never
+reopens the database to recover a missing temporary file: it fails and the user can retry.
+Staging/rendering failures clean up temporary files and leave the source/correction records intact.
+Already-compressed media and PDF entries are stored without ZIP recompression. Export/image/download
+admission slots fail fast with 503 instead of holding database connections while waiting.
+
+Original evidence GET supports single byte ranges (206), SHA-256 ETags and `If-Range`; an invalid
+range returns 416 with the representation length. Access and report/photo association are checked
+before serving any bytes. A private temporary disk cache shares immutable originals between devices
+and range requests, with one loader per original and two database BLOB loads at most in parallel.
+The database closes before cache waits or sending. Responses read independent handles in 256-KiB
+blocks; disconnect releases the handle and admission slot. Idle cache budget is 512 MiB/2048 files,
+with ten-minute expiry checked on access; active leases remain pinned until their responses finish.
+Download overload returns 503 with Retry-After 2 seconds. Export admission retains its separate limit.
+
+`report_corrections` records source revision, editor, original owner, cloned photo mapping and commit
+fingerprint. Editing copies require admin plus `X-Lem-Client-Platform: windows|linux`, and only their
+editor can access them. This header implements a supported-platform policy, not hardware attestation.
+Catalogue projections hide working copies from other users/platforms. Normal report PUT/photo gates
+also apply to correction drafts; only the commit endpoint can replace the source. Ordinary report
+ownership rules remain unchanged. Deletion with `correction_only=true` cannot remove a final report.
+The server console can cancel an orphaned working copy but cannot transfer it or delete its source
+while it is active. See the [shared correction contract](../../Common/docs/report-contract.md).
+
+Committing changed EST.02/03/04 answers updates the physical station and replacement snapshot
+atomically. A conflicting newer value returns 409 without deleting the original or changing the
+station; untouched fields stay current. This also supports explicit edits to legacy closed reports.
+Committed correction responses include live `station_update` data on POST and GET for client cache
+refresh and lost-response recovery. Retrying the same commit never reapplies its station edits.
+Correction commit takes the station-catalogue lock before charger/report locks, matching ordinary
+closure/import. Reversing that order creates a PostgreSQL deadlock when both operations overlap.
+Every cloned signature reference, including `legacy_signatures` on a repeated correction, follows
+the new evidence IDs; it must not refer to the source deleted after a successful replacement.
+
+Report responses and catalogue summaries expose a public `identifier` derived from frozen context
+and completion time. Download headers use that name for both PDF and ZIP, with UTF-8 filename
+support; the ZIP contains the equally named PDF plus `report.json` and originals. UUIDs remain the
+API/storage keys. See [naming rules](../../Common/docs/report-contract.md#public-report-identifiers-and-export-names).
 
 The lifespan task checks expired contract trash roughly every minute. Export/media limits and retry
 semantics are documented in [security](../../Common/docs/security.md); operator procedures are in
 [administration](administration.md).
+
+### Checklist v7 migration and compatibility
+
+Version 0.2.6 is the minimum client for template v7. Draft reads project legacy v6 data; the next
+write persists the template, answer migration and photo checkpoint moves under the same transaction
+and revision check. Correction creation upgrades the copy, never the closed original. Validation
+recomputes MAN.12/MAN.18 independently from client assessments. See Common/docs/report-contract.md.
+Independent photo uploads also persist that migration before validating the projected checkpoint.
+Invalid media and stale revisions leave the saved legacy report and originals intact.
+Pre-v6 correction copies use the current form with an optional `ANT` section preserving old
+answers, observations and evidence. Reused IDs are never treated as current station-identity
+fields. Their historical signatures remain evidence; current questions require a new signature.
+GET projects an already-open old correction identically to its transactional write migration.
+`frozen_history: true` permits completing the staged upload of a previously closed offline v6 report;
+the temporary `template.frozen_upload` state disables editing until its original closure completes.

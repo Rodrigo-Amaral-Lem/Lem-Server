@@ -20,7 +20,7 @@ from app.pdf_report import build_pdf
 def setup(tmp_path, monkeypatch):
     monkeypatch.setenv("ADMIN_PASSWORD", "StrongPassword123!")
     app = create_app("sqlite:///" + str(tmp_path / "test.db"))
-    c = TestClient(app, headers={"X-Lem-Client-Version": "0.2.0"})
+    c = TestClient(app, headers={"X-Lem-Client-Version": "0.2.6"})
     token = c.post(
         "/api/login", json={"email": "admin@lem.pt", "password": "StrongPassword123!"}
     ).json()["token"]
@@ -75,6 +75,21 @@ def answers():
     }
 
 
+def add_signature(c, headers, report_id, payload, revision=1):
+    """Supply the current mandatory signature when testing unrelated closure rules."""
+    image = BytesIO()
+    Image.new("RGB", (40, 30), "black").save(image, format="PNG")
+    photo_id = str(uuid.uuid4())
+    result = c.put(f"/api/reports/{report_id}/photos/{photo_id}", headers=headers,
+        data={"checkpoint": "FIN.02", "base_revision": str(revision)},
+        files={"file": ("signature.png", image.getvalue(), "image/png")})
+    assert result.status_code == 200, result.text
+    payload["answers"]["FIN.02"] = {"value": "Técnico de teste", "notes": ""}
+    payload["signatures"] = {"FIN.02": {"photo_id": photo_id,
+        "signed_by": "Técnico de teste", "signed_at": "2026-11-15T10:00:00Z"}}
+    return photo_id
+
+
 def test_import_preview_atomic_upsert_and_profiles(setup):
     c, h, contract, app = setup
     cid = contract["id"]
@@ -95,7 +110,7 @@ def test_import_preview_atomic_upsert_and_profiles(setup):
     assert c.get("/api/companies/Galp/import-profile", headers=h).json() == MAPPING
 
 
-def test_reports_photos_pdf_zip_permissions_conflict(setup):
+def test_reports_photos_pdf_zip_permissions_conflict(setup, tmp_path):
     c, h, contract, app = setup
     cid = contract["id"]
     upload(c, h, cid, True)
@@ -134,6 +149,7 @@ def test_reports_photos_pdf_zip_permissions_conflict(setup):
     a["EST.01"]["value"] = "OK"
     a["SITE.02"] = {"value": "NOK", "notes": "Pintura com desgaste"}
     payload = {"answers": a}
+    add_signature(c, t, rid, payload)
     assert (
         c.put(
             "/api/reports/" + rid,
@@ -175,7 +191,7 @@ def test_reports_photos_pdf_zip_permissions_conflict(setup):
         json={**body, "base_revision": 1, "payload": payload, "status": "closed"},
     )
     assert closed.status_code == 200, closed.text
-    assert closed.json()["revision"] == 2 and len(closed.json()["photos"]) == 2
+    assert closed.json()["revision"] == 2 and len(closed.json()["photos"]) == 3
     assert (
         c.put(
             "/api/reports/" + rid, headers=t, json={**body, "base_revision": 2, "payload": payload}
@@ -186,12 +202,12 @@ def test_reports_photos_pdf_zip_permissions_conflict(setup):
     assert p.content.startswith(b"%PDF")
     zipbytes = c.get("/api/reports/" + rid + "/bundle", headers=t).content
     with ZipFile(BytesIO(zipbytes)) as z:
-        assert z.read("report.pdf").startswith(b"%PDF")
+        assert z.read(closed.json()["identifier"] + ".pdf").startswith(b"%PDF")
         assert z.read(f"fotografias/EST.01/{pid}.jpg") == data
     with app.state.factory() as db:
         assert db.get(Photo, pid).data == data
     # Keep a demonstration PDF from the same tested renderer.
-    root = Path(__file__).resolve().parents[2] / "examples"
+    root = tmp_path / "examples"
     root.mkdir(exist_ok=True)
     (root / "report-demonstracao.pdf").write_bytes(p.content)
     assert (
@@ -312,6 +328,7 @@ def test_remove_draft_photo_permissions_revision_retry_and_required_evidence(set
     assert (
         c.delete(url + "?base_revision=1", headers=h).json()["revision"] == 2
     ), "Retry must be idempotent"
+    add_signature(c, h, rid, body["payload"], revision=2)
     assert (
         c.put(
             "/api/reports/" + rid, headers=h, json={**body, "base_revision": 2, "status": "closed"}
@@ -325,12 +342,14 @@ def test_remove_draft_photo_permissions_revision_retry_and_required_evidence(set
         c.put(
             "/api/reports/" + rid,
             headers=h,
-            json={**body, "base_revision": 2, "payload": {"answers": a}, "status": "closed"},
+            json={**body, "base_revision": 2, "status": "closed"},
         ).status_code
         == 200
     )
     with ZipFile(BytesIO(c.get("/api/reports/" + rid + "/bundle", headers=h).content)) as z:
-        assert not any(n.startswith("fotografias/") for n in z.namelist())
+        assert not any(n.startswith("fotografias/EST.01/") for n in z.namelist())
+        signature_id = body["payload"]["signatures"]["FIN.02"]["photo_id"]
+        assert f"fotografias/FIN.02/{signature_id}.png" in z.namelist()
     assert (
         c.delete(url + "?base_revision=3", headers=h).status_code == 409
     ), "Even retry must not edit a closed report"

@@ -11,8 +11,9 @@ import os
 import re
 from urllib.parse import urlparse
 
-VERSION = "0.2.0"
-MINIMUM_CLIENT = "0.2.0"
+VERSION = "0.3.0"
+# Consolidation changes the release number, not the checklist-v7 protocol floor.
+MINIMUM_CLIENT = "0.2.6"
 HEADER = "X-Lem-Client-Version"
 
 
@@ -34,6 +35,12 @@ class ClientPolicy:
             raise ValueError(
                 "Invalid Lem client policy: require minimum <= latest (major.minor.patch)"
             )
+        # A stale deployment .env must not admit clients that cannot represent
+        # the new checklist/units. Preserve stricter administrator policy values.
+        if low < version_tuple(MINIMUM_CLIENT):
+            self.minimum = MINIMUM_CLIENT
+        if high < version_tuple(self.minimum):
+            self.latest = self.minimum
         if self.update_url:
             url = urlparse(self.update_url)
             if url.scheme != "https" or not url.netloc or url.username or url.password:

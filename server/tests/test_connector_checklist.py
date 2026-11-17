@@ -11,7 +11,7 @@ from pypdf import PdfReader
 from app.checklist import for_charger, connector_names
 from app.main import TEMPLATE
 from app.models import Charger
-from test_workflow import setup, upload, answers
+from test_workflow import setup, upload, answers, add_signature
 
 CASES = json.loads(
     (Path(__file__).resolve().parents[2] / "shared/connector-cases.json").read_text()
@@ -28,7 +28,7 @@ def test_shared_connector_cases(case):
     assert generated["load_test_connectors"] == case["names"]
     items = next(s["items"] for s in generated["sections"] if s["id"] == "CARG")
     count = max(1, len(case["names"]))
-    assert len(items) == count + 3
+    assert [i["id"] for i in items[count:]] == ["CARG.04", "CARG.05", "CARG.06", "CARG.07"]
     assert [i["id"] for i in items[:count]] == [f"CARG.01.{n:02d}" for n in range(1, count + 1)]
     if "labels" in case:
         assert [i["label"] for i in items[:count]] == case["labels"]
@@ -58,6 +58,7 @@ def test_connector_tests_validate_independently_and_export_frozen_labels(setup):
     assert r.status_code == 200, r.text
     frozen = r.json()["template"]
     assert frozen["load_test_connectors"] == ["CCS2", "CCS2"]
+    add_signature(c, h, rid, body["payload"])
     rejected = c.put(path, headers=h, json={**body, "base_revision": 1, "status": "closed"})
     assert rejected.status_code == 422 and "CARG.01.02" in rejected.text
     payload["CARG.01.02"] = {"value": "NOK", "notes": ""}
@@ -91,7 +92,33 @@ def test_connector_tests_validate_independently_and_export_frozen_labels(setup):
     single = c.put("/api/reports/" + str(uuid.uuid4()), headers=h, json=body)
     assert single.status_code == 200, single.text
     group = next(s for s in single.json()["template"]["sections"] if s["id"] == "CARG")
-    assert group["items"][0]["label"] == "Teste de carga do conector Mennekes Type 2"
+    assert group["items"][0]["label"] == "Teste de carga do conector AC Type 2"
     # Removed fixed AC/CCS/CHAdeMO checkpoint IDs are no longer accepted.
     bad = {**body, "payload": {"answers": {"CARG.02": {"value": "OK"}}}}
     assert c.put("/api/reports/" + str(uuid.uuid4()), headers=h, json=bad).status_code == 422
+
+
+@pytest.mark.parametrize('name', ['Mennekes Type 2', 'AC Type 2'])
+def test_import_connector_name_and_old_client_alias_remain_compatible(setup, name):
+    import openpyxl
+    c, h, contract, app = setup
+    workbook = openpyxl.Workbook()
+    workbook.active.append(['ID', 'Conectores'])
+    workbook.active.append(['AC-001', '2x ' + name])
+    data = BytesIO(); workbook.save(data)
+    mapping = {'sheet': workbook.active.title, 'header_row': 1,
+               'columns': {'external_id': 'ID', 'connectors': 'Conectores'}}
+    for commit in ('false', 'true'):
+        response = c.post(f'/api/contracts/{contract["id"]}/import', headers=h,
+                          files={'file': ('connectors.xlsx', data.getvalue())},
+                          data={'mapping': json.dumps(mapping), 'commit': commit})
+        assert response.status_code == 200, response.text
+    charger = c.get(f'/api/contracts/{contract["id"]}/chargers', headers=h).json()[0]
+    assert charger['details']['connectors'] == '2x AC Type 2'
+    assert charger['details']['source']['Conectores'] == '2x ' + name
+    for client_name in ('Mennekes Type 2', 'AC Type 2'):
+        response = c.put('/api/reports/' + str(uuid.uuid4()), headers=h, json={
+            'charger_id': charger['id'], 'base_revision': 0, 'checklist_version': TEMPLATE['version'],
+            'status': 'draft', 'payload': {'answers': {}}, 'load_test_connectors': [client_name] * 2})
+        assert response.status_code == 200, response.text
+        assert response.json()['template']['load_test_connectors'] == ['AC Type 2'] * 2

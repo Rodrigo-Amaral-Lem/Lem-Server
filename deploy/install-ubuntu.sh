@@ -6,13 +6,31 @@
 # Changes host packages/firewall, generates private .env/credentials, creates volumes and starts services.
 # Checks existing installation/database markers before creating credentials. See docs/deployment.md.
 
-# First install on a fresh Ubuntu 24.04/26.04 server. Run as lem, not with sudo bash.
+# First install on a fresh Ubuntu 24.04/26.04 server, as the selected non-root account.
 set -euo pipefail
 umask 077
 cd "$(dirname "$0")"
 fail() { printf 'ERRO: %s\n' "$*" >&2; exit 1; }
 trap 'printf "Instalação interrompida. Consulte o erro acima; não apague os volumes Docker.\n" >&2' ERR
-[[ $EUID -ne 0 ]] || fail 'Execute como lem: bash deploy/install-ubuntu.sh (o script usa sudo quando necessário).'
+# Validate identity before any host changes. Selecting a user never silently switches
+# accounts: the checkout and private configuration must belong to the SSH login.
+lem_install_user=$(id -un)
+while (($#)); do
+    case "$1" in
+        --user)
+            (($# >= 2)) && [[ -n $2 ]] || fail 'Falta o valor de --user.'
+            lem_install_user=$2
+            shift 2 ;;
+        -h|--help)
+            printf 'Uso: bash deploy/install-ubuntu.sh [--user USER]\nUSER: conta Linux atual por defeito; requer sudo. Execute com essa conta, sem sudo bash.\n'
+            exit 0 ;;
+        *) fail "Opção desconhecida: $1. Use --help." ;;
+    esac
+done
+[[ $lem_install_user =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || fail 'Utilizador inválido.'
+[[ $EUID -ne 0 ]] || fail 'Execute com a conta Linux de instalação, sem sudo bash (o script usa sudo quando necessário).'
+[[ $(id -un) == "$lem_install_user" ]] || fail "Entre por SSH como $lem_install_user e execute novamente; --user não muda de conta."
+printf 'Conta Linux de instalação: %s\n' "$lem_install_user"
 [[ -f ../server/run.py && -f ../shared/checklist-v1.json ]] || fail 'Faltam ficheiros: copie e extraia o projeto completo.'
 source /etc/os-release
 [[ ${ID:-} == ubuntu ]] || fail 'Este instalador requer Ubuntu 24.04 ou 26.04 LTS.'
@@ -23,7 +41,7 @@ case ${VERSION_ID:-} in
 esac
 [[ ! -e .env ]] || fail 'Já existe deploy/.env. Não será substituído. Este instalador é apenas para a primeira instalação.'
 [[ -t 0 ]] || fail 'Execute num terminal interativo local ou SSH para escolher o email do administrador.'
-command -v sudo >/dev/null || fail 'Instale sudo e atribua as permissões ao utilizador lem.'
+command -v sudo >/dev/null || fail "Instale sudo e atribua as permissões ao utilizador $lem_install_user."
 sudo -v
 # Do not replace a web service which may have been installed since preparation.
 if [[ -n $(sudo ss -H -ltn '( sport = :80 or sport = :443 )') ]]; then
@@ -68,7 +86,7 @@ fi
 lem_db_password=$(openssl rand -hex 24)
 lem_admin_password=$(openssl rand -hex 24)
 # noclobber makes creation atomic and prevents replacement of an existing configuration.
-(set -o noclobber; printf 'LEM_DOMAIN=%s\nPOSTGRES_PASSWORD=%s\nADMIN_EMAIL=%s\nADMIN_PASSWORD=%s\nLEM_MIN_CLIENT_VERSION=0.2.0\nLEM_LATEST_CLIENT_VERSION=0.2.0\nLEM_UPDATE_URL=\n' "$lem_domain" "$lem_db_password" "$lem_admin_email" "$lem_admin_password" > .env)
+(set -o noclobber; printf 'LEM_DOMAIN=%s\nPOSTGRES_PASSWORD=%s\nADMIN_EMAIL=%s\nADMIN_PASSWORD=%s\nLEM_MIN_CLIENT_VERSION=0.2.6\nLEM_LATEST_CLIENT_VERSION=0.3.0\nLEM_UPDATE_URL=\n' "$lem_domain" "$lem_db_password" "$lem_admin_email" "$lem_admin_password" > .env)
 chmod 600 .env
 python3 - "$lem_admin_name" <<'PY'
 import sys

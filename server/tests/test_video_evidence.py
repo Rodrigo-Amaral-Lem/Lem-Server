@@ -15,7 +15,7 @@ from app.images import InvalidImage
 from app.exports import write_bundle
 from app.pdf_report import build_pdf
 from test_bug_regressions import _report, _jpeg
-from test_workflow import setup, upload, answers
+from test_workflow import setup, upload, answers, add_signature
 
 @pytest.fixture
 def video(tmp_path):
@@ -63,6 +63,7 @@ def test_video_upload_retry_delete_and_required_photo(setup, video):
     current = c.get(f'/api/reports/{rid}',headers=h).json()
     assert current['photos'][0]['mime'] == 'video/mp4'
     payload = {"answers":answers()}
+    add_signature(c, h, rid, payload, revision=current['revision'])
     payload["answers"]["EST.01"] = {"value":"OK","notes":""}
     closed = c.put(f'/api/reports/{rid}', headers=h,
                    json={"checklist_version": TEMPLATE["version"], "charger_id":chargers[0]["id"],"base_revision":current['revision'],"status":"closed","payload":payload})

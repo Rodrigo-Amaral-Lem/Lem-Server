@@ -12,9 +12,9 @@ prepare = runpy.run_path(str(Path(__file__).resolve().parents[1] / "prepare-conf
 
 
 @pytest.mark.parametrize(
-    "latest,expected", [("0.1.28", "0.2.0"), ("0.1.45", "0.2.0"), ("0.1.52", "0.2.0"), ("0.1.57", "0.2.0"), ("0.2.0", "0.2.0")]
+    "latest,expected", [(version, "0.3.0") for version in ("0.1.28", "0.1.45", "0.1.52", "0.1.57", "0.2.0", "0.2.1", "0.2.2", "0.2.3", "0.2.4", "0.2.5", "0.2.6")]
 )
-def test_promote_pinned_latest_without_changing_minimum_or_secrets(tmp_path, latest, expected):
+def test_promote_pinned_versions_without_changing_secrets(tmp_path, latest, expected):
     env = tmp_path / "old.env"
     meta = tmp_path / "meta.json"
     out = tmp_path / "next.env"
@@ -34,6 +34,6 @@ def test_promote_pinned_latest_without_changing_minimum_or_secrets(tmp_path, lat
     prepare(env, meta, out)
     result = out.read_text()
     assert f"LEM_LATEST_CLIENT_VERSION={expected}\n" in result
-    assert "LEM_MIN_CLIENT_VERSION=0.2.0\n" in result
+    assert "LEM_MIN_CLIENT_VERSION=0.2.6\n" in result
     assert "ADMIN_PASSWORD=PRIVATE_FIXTURE\n" in result
     assert out.stat().st_mode & 0o077 == 0

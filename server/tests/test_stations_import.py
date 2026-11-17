@@ -3,12 +3,13 @@
 
 """Integration tests against the supplied workbook (opt-in path, never shipped).
 
-Set STATIONS_TEST_WORKBOOK to the original Import_Sheet workbook.
+Set STATIONS_TEST_WORKBOOK to the populated Import_Sheet workbook (51 records).
+Set STATIONS_TEST_TEMPLATE to the blank Import_Sheet for the empty-template check.
 Validated with the supplied V0-2 XLSM on 2026-11-10.
 Fixtures alter only in-memory XML bytes; the user's file is never rewritten.
 """
 
-import os, json, hashlib
+import os, json
 from pathlib import Path
 from io import BytesIO
 from zipfile import ZipFile, ZIP_DEFLATED
@@ -21,7 +22,7 @@ from app.import_profiles import STATIONS_COLUMNS
 NS = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def source():
     path = os.getenv("STATIONS_TEST_WORKBOOK")
     if not path:
@@ -56,7 +57,7 @@ def change_cell(data, cell, value=None):
 def test_real_file_autodetect_and_preserve_data(source):
     mapping = profile(source)
     assert mapping["sheet"] == "Stations" and mapping["header_row"] == 1
-    assert len(mapping["required_fields"]) == 10
+    assert set(mapping["required_fields"]) == {"external_id", "address", "region", "manufacturer", "connectors"}
     r = parse(source, mapping)
     assert r["count"] == 51 and r["errors"] == []
     first = r["records"][0]
@@ -130,3 +131,24 @@ def test_station_import_is_atomic_and_reimport_updates(source, setup):
         data={"mapping": json.dumps(mapping), "commit": "true"},
     )
     assert again.json() == {"created": 0, "updated": 51}
+
+def test_blank_template_ignores_formatted_empty_rows(setup):
+    path = os.getenv("STATIONS_TEST_TEMPLATE")
+    if not path:
+        pytest.skip("Set STATIONS_TEST_TEMPLATE for the blank-template integration check")
+    data = Path(path).read_bytes()
+    mapping = profile(data)
+    result = parse(data, mapping)
+    assert result["records"] == [] and result["errors"] == [] and result["count"] == 0
+    client, headers, contract, _ = setup
+    url = "/api/contracts/" + contract["id"] + "/import"
+    for commit in ("false", "true"):
+        response = client.post(url, headers=headers,
+            files={"file": ("template.xlsm", data)},
+            data={"mapping": json.dumps(mapping), "commit": commit})
+        assert response.status_code == 200, response.text
+        if commit == "false":
+            assert response.json()["count"] == 0 and response.json()["errors"] == []
+        else:
+            assert response.json() == {"created": 0, "updated": 0}
+    assert client.get("/api/contracts/" + contract["id"] + "/chargers", headers=headers).json() == []

@@ -11,11 +11,19 @@ def canonical(key):
         return f"PC02.{int(key[4:]) + 1:02d}"
     return key
 
+def milliamp(key):
+    return key in ("MAN.11", "MAN.12")
+
+
 def digits(key):
+    if milliamp(key):
+        return 6
     key = canonical(key)
     return 3 if key in VOLTAGES else 5 if key == "PC02.19" else 0
 
 def unit(key):
+    if milliamp(key):
+        return "mA"
     key = canonical(key)
     return "V" if key in VOLTAGES else "Ω" if key == "PC02.19" else ""
 
@@ -31,9 +39,11 @@ def format_value(key, value):
         return value
     if not_applicable(value):
         return "Não Aplicável"
-    match = re.fullmatch(r"([0-9]{1," + str(digits(key)) + r"}(?:[.,][0-9]{1,2})?)(?:\s*" + unit(key) + r")?", value, re.I)
+    decimals = "" if milliamp(key) else r"(?:[.,][0-9]{1,2})?"
+    match = re.fullmatch(r"([0-9]{1," + str(digits(key)) + "}" + decimals + r")(?:\s*" + unit(key) + r")?", value, re.I)
     if not match:
-        raise ValueError(f"{key}: máximo {digits(key)} algarismos inteiros e 2 casas decimais, ou Não Aplicável")
+        detail = "6 algarismos, sem casas decimais, em mA" if milliamp(key) else f"{digits(key)} algarismos inteiros e 2 casas decimais"
+        raise ValueError(f"{key}: máximo {detail}, ou Não Aplicável")
     return match[1].replace(".", ",") + " " + unit(key)
 
 def outside(key, value):

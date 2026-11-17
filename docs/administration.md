@@ -4,6 +4,17 @@ Use an account authorized for the target installation. Administrative commands m
 selected by `DATABASE_URL`; verify the target before editing or deleting data. Run local examples
 from the **Server repository root**, and keep local logs/test data in ignored `build/`.
 
+## Technician password reset in the app
+
+An authenticated administrator can open **Gestão → Contas e acessos**, select a technician and
+choose **Repor password do técnico…**. Enter the new password twice (12–200 characters).
+The API independently rejects non-administrator callers and every target role except `tech`,
+including an account promoted since the app loaded its list. It changes the salted password hash,
+revokes all sessions and records `user.password.reset` with actor/target in one transaction.
+Reports, ownership and assignments remain intact; devices must log in with the new password.
+Use the console below for administrator password recovery. Install the updated API before using
+this new app action; it adds no migration or incompatibility for existing clients.
+
 ## Account and data console
 
 On the installed host, from the installation root:
@@ -67,10 +78,12 @@ Import is analysis → mapping/preview → commit. Preview does not apply catalo
 atomic and includes a retry/batch identity. Keep source identifiers as text so leading zeroes in
 serial numbers and similar fields survive.
 
-The built-in `lem-stations-v1` profile recognizes the **Station ID** layout. Required columns
-include Station ID, Morada, CCDR, Fornecimento de Energia, Nº(s) Série, Fabricante, Modelo, Potência
-(kVA), Limitação de Potência (kVA), and Tomadas / Fichas. Código Postal, Latitude, Longitude and CPE
-Associado are optional in that profile. The exact field/header mapping is maintained in
+The built-in `lem-stations-v1` profile recognizes the **Station ID** layout. Required cell values
+are Station ID, Morada, CCDR, Fabricante and Tomadas / Fichas. Nº(s) Série, Modelo, Fornecimento de
+Energia, Potência (kVA) and Limitação de Potência (kVA) may be empty, as may Código Postal, Latitude,
+Longitude and CPE Associado. Keep all template headers in their expected columns, including those
+whose values are optional. Model (EST.03) and serial number (EST.04) must be filled in the report
+before closure; drafts can retain these answers empty. The exact field/header mapping is maintained in
 [import_profiles.py](../server/app/import_profiles.py), not in a separate versioned document.
 
 Generic mappings and saved company profiles remain supported. The parser validates workbook
@@ -112,6 +125,85 @@ identify the intended database/volume, preserve the current state, restore the s
 with PostgreSQL `pg_restore`, then start the API and verify catalogue, reports, evidence and login.
 Do not generate a fresh database password against an existing initialized volume. No restore of a
 production database was performed as part of this documentation update.
+
+### Move a backup to a new server
+
+This procedure **replaces the destination database**; it does not merge installations.
+It assumes a custom `.dump` made by `deploy/backup.sh`, the PostgreSQL 17 Compose layout,
+and a fresh destination with matching or newer compatible LEM source. Do not restore an
+unknown newer schema into older server code. Keep the old server and backup until checks pass.
+The Linux login can be `rodrigo_lem` while PostgreSQL's role/database remain `lem`.
+
+1. Prepare the new Ubuntu host using [First installation](deployment.md#first-installation--on-the-server).
+   Log in as `rodrigo_lem`, put the Server source in `/home/rodrigo_lem/apps/Lem`, and run
+   `LEM_DOMAIN=lem.example.com bash deploy/install-ubuntu.sh --user rodrigo_lem` there.
+   Use a temporary hostname resolving to the new host if the production hostname still serves
+   the old host; the installer checks HTTPS. Keep the new `.env` and its database password.
+   Do not overwrite it with the old host's configuration after the database volume is initialized.
+2. For a final cutover, stop writes on the **old host**, then create the backup from its
+   installation root. This takes the old application offline; do not resume writes there
+   while users begin working on the new host. An existing backup restores only its snapshot.
+
+   ```bash
+   sudo docker compose --env-file deploy/.env -f deploy/compose.yml stop proxy api
+   bash deploy/backup.sh
+   ```
+
+3. Transfer the exact timestamped dump printed by the backup command over SSH. For example,
+   from a workstation (replace hostnames and the timestamp):
+
+   ```bash
+   scp lem@OLD_SERVER:/home/lem/apps/Lem/deploy/backups/lem-TIMESTAMP.dump ./lem-transfer.dump
+   scp ./lem-transfer.dump rodrigo_lem@NEW_SERVER:~/lem-transfer.dump
+   ```
+
+   Compare `sha256sum` on both Linux hosts (or `Get-FileHash` on Windows). Restrict access to
+   every transferred copy: `chmod 600 ~/lem-transfer.dump` on the new host. The dump contains
+   accounts, reports, signatures and database-stored evidence; treat it as private data.
+
+4. On the **new host**, logged in as `rodrigo_lem`, run the following block from the installation
+   root. The subshell stops on any error. It preserves the destination snapshot before replacement,
+   validates the archive, and restores in one transaction; failed restoration leaves services
+   stopped for diagnosis. Never use `down -v` or `--reset-database` for this procedure.
+
+   ```bash
+   cd /home/rodrigo_lem/apps/Lem
+   (
+     set -e
+     compose=(sudo docker compose --env-file deploy/.env -f deploy/compose.yml)
+     test -s "$HOME/lem-transfer.dump"
+     sudo -v
+     "${compose[@]}" exec -T db pg_restore --list < "$HOME/lem-transfer.dump" > /dev/null
+     "${compose[@]}" stop proxy api
+     bash deploy/backup.sh
+     "${compose[@]}" exec -T db pg_restore \
+       -U lem -d lem --clean --if-exists --no-owner --no-privileges \
+       --exit-on-error --single-transaction < "$HOME/lem-transfer.dump"
+     "${compose[@]}" up -d api proxy
+   )
+   ```
+
+   `--clean` replaces objects from the dump, and `--single-transaction` rolls back those
+   changes if restoration fails. If schema differences cause an error, keep the API stopped
+   and investigate compatibility; do not remove error checks or delete volumes to force a restore.
+   `--no-owner --no-privileges` avoids importing old database ownership/grants. The new database
+   role password remains the one in the new `.env`; the Linux account name is irrelevant here.
+
+5. Inspect `sudo docker compose --env-file deploy/.env -f deploy/compose.yml ps` and
+   `logs --tail=80 api proxy` using the same Compose options. Check
+   `curl --fail https://lem.example.com/api/health`, log in with an **account from the backup**,
+   and verify contracts, draft/closed reports, photographs, signatures and PDF/ZIP exports.
+   The fresh install's bootstrap administrator is replaced by backed-up accounts; changing
+   `ADMIN_PASSWORD` does not reset their passwords. Use the account console above if needed.
+6. Point clients at the new HTTPS URL, or move production DNS after verification. If changing
+   from a temporary hostname, update `LEM_DOMAIN` in the new `deploy/.env`, point DNS at the new
+   host and run `sudo docker compose --env-file deploy/.env -f deploy/compose.yml up -d api proxy`;
+   then verify HTTPS again. The deployment `--domain` option asserts a hostname and does not
+   change it. Fresh TLS volumes obtain new certificates; the database dump contains no certificates.
+   Retain the old host offline for recovery. Returning to it after new writes requires reconciling
+   those writes; simply restarting it would lose the new server's changes.
+
+These are operator-run steps; repository checks do not constitute a live database restore test.
 
 ## Stop, uninstall or remove a prototype
 

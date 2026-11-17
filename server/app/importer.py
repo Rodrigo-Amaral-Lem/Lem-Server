@@ -14,6 +14,7 @@ from defusedxml.common import DefusedXmlException
 from defusedxml.ElementTree import iterparse as safe_iterparse
 from xml.etree.ElementTree import ParseError
 from openpyxl.xml import DEFUSEDXML
+from .checklist import connector_text
 
 if not DEFUSEDXML:
     raise RuntimeError("Excel imports require defusedxml protection")
@@ -158,7 +159,7 @@ def parse(data, mapping):
                 if columns.get(field) and columns[field] != label:
                     raise HTTPException(422, f"Formato Stations: {label} deve usar a coluna {col}")
             # A standard template has a deterministic mapping; import every field,
-            # while only the user-designated ten fields require populated cells.
+            # while only the fields marked required need populated cells.
             columns = {field: label for _, field, label, _ in STATIONS_COLUMNS}
 
         if not columns.get("external_id"):
@@ -199,6 +200,9 @@ def parse(data, mapping):
                 for key, i in indexes.items()
             }
             ext = rec.pop("external_id", "")
+            # Canonical display terminology; source below retains the original cell.
+            if "connectors" in rec:
+                rec["connectors"] = connector_text(rec["connectors"])
             missing = []
             if standard:
                 for col, field, label, required in STATIONS_COLUMNS:

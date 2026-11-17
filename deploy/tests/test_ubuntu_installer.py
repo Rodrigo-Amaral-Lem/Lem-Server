@@ -9,6 +9,39 @@ import pytest
 INSTALLER = Path(__file__).resolve().parents[1] / "install-ubuntu.sh"
 
 
+@pytest.mark.parametrize("args,login,uid,success", [
+    ([], "rodrigo_lem", 1000, True),
+    (["--user", "rodrigo_lem"], "rodrigo_lem", 1000, True),
+    (["--user", "lem"], "rodrigo_lem", 1000, False),
+    (["--user", "bad@user"], "rodrigo_lem", 1000, False),
+    (["--user"], "rodrigo_lem", 1000, False),
+    (["--unknown"], "rodrigo_lem", 1000, False),
+    (["--user", "root"], "root", 0, False),
+])
+def test_installation_account_checked_before_host_changes(args, login, uid, success):
+    # Execute the actual argument/identity gate with a simulated login. EUID is a
+    # readonly Bash variable, so substitute only that probe to cover root as well.
+    source = INSTALLER.read_text()
+    block = source.split("lem_install_user=$(id -un)", 1)[1].split("[[ -f ../server/run.py", 1)[0]
+    block = "lem_install_user=$(id -un)" + block
+    block = block.replace("$EUID", str(uid))
+    code = 'set -eu; fail(){ echo "$*" >&2; exit 9; }; id(){ printf "%s" "$TEST_LOGIN"; };\n' + block
+    import os
+    result = subprocess.run(
+        ["bash", "-c", code, "installer-test", *args],
+        env=dict(os.environ, TEST_LOGIN=login), capture_output=True, text=True,
+    )
+    assert (result.returncode == 0) == success, result.stdout + result.stderr
+    if success:
+        assert login in result.stdout
+
+
+def test_help_needs_no_sudo_or_host_setup():
+    result = subprocess.run(["bash", str(INSTALLER), "--help"], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert "--user USER" in result.stdout
+
+
 @pytest.mark.parametrize("release,suite", [("24.04", "noble"), ("26.04", "resolute")])
 def test_official_repository_matches_host_release(release, suite):
     source = INSTALLER.read_text()

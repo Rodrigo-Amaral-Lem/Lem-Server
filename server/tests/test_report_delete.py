@@ -8,7 +8,7 @@ import uuid
 from io import BytesIO
 from PIL import Image
 from sqlalchemy import select, func
-from test_workflow import setup, upload, answers
+from test_workflow import setup, upload, answers, add_signature
 from app.models import Report, Photo, DeletedReport, Audit
 
 
@@ -99,9 +99,8 @@ def test_only_admin_can_delete_closed_reports_and_others_drafts(setup):
     rid = str(uuid.uuid4())
     url = "/api/reports/" + rid
     assert c.put(url, headers=owner, json=body).status_code == 200
-    # Close a valid current report: MAN.12 needs a photograph even for N/A.
-    from test_rules_056 import photo
-    photo(c, owner, rid, "MAN.12")
+    # Close with the current mandatory technician signature.
+    add_signature(c, owner, rid, body["payload"])
     body.update(status="closed", base_revision=1)
     closed = c.put(url, headers=owner, json=body)
     assert closed.status_code == 200, closed.text

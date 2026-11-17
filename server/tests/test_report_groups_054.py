@@ -16,14 +16,19 @@ def test_exact_groups_questions_and_photo_requirements():
     sections=TEMPLATE['sections']
     assert [s['id'] for s in sections]==['SEG','SITE','QVE','EST','MAN','CARG','FIN']
     groups={s['id']:s['items'] for s in sections}
-    assert len(groups['SEG'])==7 and len(groups['EST'])==17 and len(groups['QVE'])==14 and len(groups['MAN'])==21
+    # EST.10 was retired; MAN.21 now holds after-maintenance photos and the
+    # previous general observations moved to MAN.22 without renumbering EST.
+    assert len(groups['SEG'])==7 and len(groups['EST'])==17 and len(groups['QVE'])==14 and len(groups['MAN'])==22
+    assert 'EST.10' not in {i['id'] for i in groups['EST']}
+    assert groups['MAN'][-1]['id'] == 'MAN.22'
+    assert [groups[key][-1]['kind'] for key in ('EST', 'QVE', 'MAN')] == ['notes'] * 3
     items={i['id']:i for s in sections for i in s['items']}
     for key in ['SEG.01','SITE.02','SITE.03','SITE.04','EST.06','EST.13','EST.16','QVE.01','QVE.04','FIN.01']:
         assert items[key]['photo_required'], key
     assert not items['EST.04']['photo_required']
     assert not any(i['photo_required'] for i in groups['SEG'][1:])
     assert items['EST.06']['label']=='Verifique o ID da estação'
-    assert items['QVE.03']['label']=='Botão de emergência - Verifique a dupla sinalização'
+    assert items['QVE.03']['label']=='Botoneira de emergência - Verifique a dupla sinalização'
     assert items['MAN.13']['label']=='Proteção diferencial QVE e Carregador - Teste manual do dispositivo'
     assert items['MAN.01']['label'].startswith('Atualize o software')
     assert items['FIN.01']['label']=='Fotografia da Estação de Carregamento após intervenção'

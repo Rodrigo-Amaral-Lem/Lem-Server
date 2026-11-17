@@ -8,7 +8,7 @@ from io import BytesIO
 import pytest
 from PIL import Image
 from sqlalchemy import select, func
-from test_workflow import setup, xlsx, upload, answers
+from test_workflow import setup, xlsx, upload, answers, add_signature
 from app.models import Station, Charger, Report, database, Contract
 
 
@@ -38,6 +38,7 @@ def png():
 
 def close(c,h,rid,body,**values):
     body=copy.deepcopy(body)
+    add_signature(c, h, rid, body['payload'], revision=body['base_revision'])
     for key,value in values.items():body['payload']['answers'][key]={'value':value,'notes':''}
     if body['payload']['answers']['EST.04']['value']!='NA':
         r=c.put(f'/api/reports/{rid}/photos/{uuid.uuid4()}',headers=h,

@@ -35,7 +35,7 @@ def test_pdf_supports_metadata_longer_than_one_page():
         "started": "2026-11-10T01:00:00+00:00",
         "finished": "2026-11-10T02:00:00+00:00",
         "snapshot": {
-            "charger": {"external_id": "TEST", "location": "Local detalhado " * 1500},
+            "charger": {"external_id": "TEST", "address": "Morada detalhada " * 1500},
             "contract": {"name": "Test", "company": "Test"},
         },
         "template": TEMPLATE,
@@ -43,7 +43,9 @@ def test_pdf_supports_metadata_longer_than_one_page():
     }
     data = build_pdf(report, [])
     assert data.startswith(b"%PDF-") and data.rstrip().endswith(b"%%EOF")
-    assert data.count(b"/Type /Page\n") > 1
+    from pypdf import PdfReader
+    from io import BytesIO
+    assert len(PdfReader(BytesIO(data)).pages) > 1
 
 
 # --- Review after 0.1.35 R2: unexportable closed reports and import preview ---
@@ -209,17 +211,17 @@ def test_bundle_is_written_one_photo_at_a_time_and_streamed():
     data = b"".join(file_chunks(spool))
     assert spool.closed and len(data) == size and loads == ["a", "b"]
     with ZipFile(BytesIO(data)) as z:
-        assert sorted(z.namelist()) == [
+        assert sorted(z.namelist()) == sorted([
             "fotografias/EST.01/a.jpg",
             "fotografias/EST.01/b.png",
             "report.json",
-            "report.pdf",
-        ]
+            "Carregador_Rascunho_Contrato.pdf",
+        ])
         assert (
             z.read("fotografias/EST.01/a.jpg") == jpeg
             and z.read("fotografias/EST.01/b.png") == png
         )
-        assert z.read("report.pdf") == b"%PDF-test"
+        assert z.read("Carregador_Rascunho_Contrato.pdf") == b"%PDF-test"
         assert json.loads(z.read("report.json")) == {"id": "r", "nome": "ação"}
         assert z.testzip() is None
 
@@ -275,6 +277,8 @@ def test_closed_report_exports_with_bounded_photo_loading(setup):
             files={"file": ("foto.jpg", originals[f"fotografias/{checkpoint}/{pid}.jpg"])},
         )
         assert response.status_code == 200, response.text
+    from test_workflow import add_signature
+    add_signature(client, headers, rid, body["payload"])
     closed = client.put(
         f"/api/reports/{rid}",
         headers=headers,
@@ -287,6 +291,6 @@ def test_closed_report_exports_with_bounded_photo_loading(setup):
     assert archive.status_code == 200
     assert int(archive.headers["content-length"]) == len(archive.content)
     with ZipFile(BytesIO(archive.content)) as z:
-        assert z.testzip() is None and z.read("report.pdf").startswith(b"%PDF-")
+        assert z.testzip() is None and z.read(closed.json()["identifier"] + ".pdf").startswith(b"%PDF-")
         for name, data in originals.items():
             assert z.read(name) == data

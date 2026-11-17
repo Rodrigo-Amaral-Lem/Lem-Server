@@ -9,12 +9,14 @@ import re
 
 ALIASES = {
     "AC": "AC (tipo não indicado)",
-    "T2": "Mennekes Type 2",
-    "TYPE2": "Mennekes Type 2",
-    "TIPO2": "Mennekes Type 2",
-    "MENNEKES": "Mennekes Type 2",
-    "MENNEKESTYPE2": "Mennekes Type 2",
-    "MENNEKESTIPO2": "Mennekes Type 2",
+    "T2": "AC Type 2",
+    "ACTYPE2": "AC Type 2",
+    "ACTIPO2": "AC Type 2",
+    "TYPE2": "AC Type 2",
+    "TIPO2": "AC Type 2",
+    "MENNEKES": "AC Type 2",
+    "MENNEKESTYPE2": "AC Type 2",
+    "MENNEKESTIPO2": "AC Type 2",
     "CCS": "CCS",
     "CCS2": "CCS2",
     "CCSTYPE2": "CCS2",
@@ -23,6 +25,11 @@ ALIASES = {
     "CCS1": "CCS1",
     "CHADEMO": "CHAdeMO",
 }
+
+
+def connector_text(value):
+    """Rename stored connector terminology without changing counts or other text."""
+    return re.sub(r"\bMennekes\s+(?:Type|Tipo)\s*2\b", "AC Type 2", value, flags=re.I)
 
 
 def connector_names(value):
@@ -70,16 +77,18 @@ def for_charger(template, details):
     for index, name in enumerate(names or ["tipo não indicado"], 1):
         seen[name] += 1
         suffix = f" #{seen[name]}" if counts[name] > 1 else ""
-        items.append(
-            dict(
-                id=f"{prefix}.01.{index:02d}",
-                label="Teste de carga do conector " + name + suffix,
-                kind="status",
-                photo_required=prototype.get("photo_required", False),
-                na_notes_required=prototype.get("na_notes_required", False),
-                na_notes_default=prototype.get("na_notes_default", ""),
-            )
+        # Inherit the complete prototype: newly added rules/help must apply to
+        # every physical connector, without maintaining a second field allowlist.
+        item = deepcopy(prototype)
+        item.update(
+            id=f"{prefix}.01.{index:02d}",
+            label="Teste de carga do conector " + name + suffix,
+            kind=prototype.get("kind", "status"),
+            photo_required=prototype.get("photo_required", False),
+            na_notes_required=prototype.get("na_notes_required", False),
+            na_notes_default=prototype.get("na_notes_default", ""),
         )
+        items.append(item)
     for section in source["sections"]:
         if section["id"] == prefix:
             section["items"] = items + [
@@ -89,9 +98,9 @@ def for_charger(template, details):
     return source
 
 
-def corrected_draft_template(template, status):
+def corrected_draft_template(template, status, *, upgrade=True):
     """Apply current v6 draft rules/order and optional notes, preserving closed history."""
-    if status != "draft" or template.get("version") != 6:
+    if status != "draft" or template.get("version") not in (6, 7):
         return template
     result = deepcopy(template)
     for section in result["sections"]:
@@ -100,6 +109,9 @@ def corrected_draft_template(template, status):
         for item in section["items"]:
             if item["id"] in ("MAN.12", "MAN.18"):
                 item["reading_required"] = True
+            # Also remove the retired hint from templates already saved as v7.
+            if item["id"] == "MAN.18":
+                item.pop("help", None)
             if item["id"] == "MAN.12":
                 item.update(photo_required=True, photo_always=False)
             if item["id"] == "SEG.01":
@@ -140,6 +152,9 @@ def corrected_draft_template(template, status):
     for section in result["sections"]:
         for item in section["items"]:
             item.update(current_rules.get(item["id"], {}))
+            # Apply to editable v6 drafts only; closed history keeps its saved rules.
+            if "MAN.14" <= item["id"] <= "MAN.18":
+                item.update(photo_required=True, photo_always=False, na_notes_required=True)
             if item["id"] in ("MAN.11", "MAN.12"):
                 item["label"] = item["label"].replace("corrente", "intensidade")
             if item["id"].startswith("CARG.01."):
@@ -156,24 +171,29 @@ def corrected_draft_template(template, status):
                         item["na_notes_required"] = True
             if not any(i['id']=='SEG.07' for i in section['items']):
                 section['items'].append(dict(id='SEG.07',label='Observações gerais de segurança',kind='notes',photo_required=False,optional=True))
-    for group, key, label in [('CARG','CARG.07','Observações gerais dos ensaios de carregamento'), ('EST','EST.18','Observações gerais do equipamento'), ('SITE','SITE.06','Observações gerais do local'), ('QVE','QVE.14','QVE - Observações gerais'), ('MAN','MAN.21','Observações gerais da manutenção')]:
+    for group, key, label in [('CARG','CARG.07','Observações gerais dos ensaios de carregamento'), ('EST','EST.18','Observações gerais do equipamento'), ('SITE','SITE.06','Observações gerais do local'), ('QVE','QVE.14','QVE - Observações gerais'), ('MAN','MAN.22' if result.get('version') == 7 else 'MAN.21','Observações gerais da manutenção')]:
         for section in result['sections']:
             if section['id']==group and not any(i['id']==key for i in section['items']):
                 section['items'].append(dict(id=key,label=label,kind='notes',photo_required=False,optional=True))
-    return result
+    from .maintenance_migration import upgrade_template
+    return upgrade_template(result) if upgrade else result
 
 
-def corrected_draft_payload(payload, template, status):
-    """Move legacy FIN.03 text into notes without changing closed history."""
-    if status != "draft" or template.get("version") != 6:
-        return payload
-    answer = payload.get("answers", {}).get("FIN.03", {})
-    value = answer.get("value", "")
-    if not value:
+def corrected_draft_payload(payload, template, status, *, upgrade=True):
+    """Migrate editable legacy content; call with its ORIGINAL template/version."""
+    if status != "draft" or template.get("version") not in (6, 7):
         return payload
     result = deepcopy(payload)
-    answer = result["answers"]["FIN.03"]
-    notes = answer.get("notes", "")
-    answer["notes"] = value if not notes or notes == value else value + "\n" + notes
-    answer["value"] = ""
+    answers = result.get("answers", {})
+    if not isinstance(answers, dict):
+        return result  # HTTP validation reports malformed input, not a migration error.
+    answer = answers.get("FIN.03", {})
+    value = answer.get("value", "") if isinstance(answer, dict) else ""
+    if isinstance(value, str) and value and isinstance(answer.get("notes", ""), str):
+        notes = answer.get("notes", "")
+        answer["notes"] = value if not notes or notes == value else value + "\n" + notes
+        answer["value"] = ""
+    if upgrade and template.get("version") == 6:
+        from .maintenance_migration import upgrade_payload
+        result = upgrade_payload(result)
     return result

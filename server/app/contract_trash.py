@@ -12,10 +12,13 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, delete
 from .models import (
     Contract,
+    ContractBranding,
+    ContractReportStyle,
     ContractTrash,
     Assignment,
     Charger,
     Report,
+    ReportCorrection,
     DeletedReport,
     OwnershipTransfer,
     Photo,
@@ -34,6 +37,7 @@ def purge_contract(db, contract, entry):
     reports = select(Report.id).where(Report.charger_id.in_(chargers))
     removed_reports = select(DeletedReport.id).where(DeletedReport.charger_id.in_(chargers))
     operations = [
+        delete(ReportCorrection).where(ReportCorrection.contract_id == cid),
         delete(Photo).where(Photo.report_id.in_(reports)),
         delete(OwnershipTransfer).where(
             OwnershipTransfer.report_id.in_(reports)
@@ -42,6 +46,8 @@ def purge_contract(db, contract, entry):
         delete(Report).where(Report.charger_id.in_(chargers)),
         delete(DeletedReport).where(DeletedReport.charger_id.in_(chargers)),
         delete(ImportBatch).where(ImportBatch.contract_id == cid),
+        delete(ContractBranding).where(ContractBranding.contract_id == cid),
+        delete(ContractReportStyle).where(ContractReportStyle.contract_id == cid),
         delete(Assignment).where(Assignment.contract_id == cid),
         delete(Charger).where(Charger.contract_id == cid),
     ]

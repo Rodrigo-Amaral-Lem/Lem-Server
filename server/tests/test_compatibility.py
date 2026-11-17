@@ -14,14 +14,14 @@ from app.models import SessionToken
 @pytest.fixture
 def api(tmp_path, monkeypatch):
     monkeypatch.setenv("ADMIN_PASSWORD", "CompatibilityPassword123!")
-    monkeypatch.setenv("LEM_MIN_CLIENT_VERSION", "0.1.28")
-    monkeypatch.setenv("LEM_LATEST_CLIENT_VERSION", "0.1.30")
+    monkeypatch.setenv("LEM_MIN_CLIENT_VERSION", "0.3.28")
+    monkeypatch.setenv("LEM_LATEST_CLIENT_VERSION", "0.3.30")
     app = create_app("sqlite:///" + str(tmp_path / "test.db"))
     return app, TestClient(app)
 
 
 @pytest.mark.parametrize(
-    "version", [None, "", "0.1.27", "0.1.31", "v0.1.28", "0.1", "0.01.28", "x" * 500, "0.1.28-beta"]
+    "version", [None, "", "0.3.27", "0.3.31", "v0.3.28", "0.1", "0.01.28", "x" * 500, "0.3.28-beta"]
 )
 def test_incompatible_or_unidentified_never_gets_session(api, version):
     app, client = api
@@ -40,7 +40,7 @@ def test_incompatible_or_unidentified_never_gets_session(api, version):
     assert client.get("/api/health").status_code == 200
 
 
-@pytest.mark.parametrize("version,update", [("0.1.28", True), ("0.1.29", True), ("0.1.30", False)])
+@pytest.mark.parametrize("version,update", [("0.3.28", True), ("0.3.29", True), ("0.3.30", False)])
 def test_compatible_login_and_existing_session_gate(api, version, update):
     app, client = api
     client.headers["X-Lem-Client-Version"] = version
@@ -54,12 +54,12 @@ def test_compatible_login_and_existing_session_gate(api, version, update):
     assert response.status_code == 200
     client.headers["Authorization"] = "Bearer " + response.json()["token"]
     assert client.get("/api/contracts").status_code == 200
-    client.headers["X-Lem-Client-Version"] = "0.1.27"
+    client.headers["X-Lem-Client-Version"] = "0.3.27"
     assert client.get("/api/contracts").status_code == 426
 
 
 @pytest.mark.parametrize(
-    "minimum,latest", [("0.1.31", "0.1.30"), ("bad", "0.1.30"), ("0.1.28", "0.1.30-beta")]
+    "minimum,latest", [("0.3.31", "0.3.30"), ("bad", "0.3.30"), ("0.3.28", "0.3.30-beta")]
 )
 def test_invalid_policy_fails_startup(monkeypatch, minimum, latest):
     monkeypatch.setenv("LEM_MIN_CLIENT_VERSION", minimum)
@@ -69,12 +69,12 @@ def test_invalid_policy_fails_startup(monkeypatch, minimum, latest):
 
 
 def test_numeric_version_order_and_download_url(monkeypatch):
-    monkeypatch.setenv("LEM_MIN_CLIENT_VERSION", "0.1.9")
-    monkeypatch.setenv("LEM_LATEST_CLIENT_VERSION", "0.1.30")
+    monkeypatch.setenv("LEM_MIN_CLIENT_VERSION", "0.3.9")
+    monkeypatch.setenv("LEM_LATEST_CLIENT_VERSION", "0.3.30")
     monkeypatch.setenv("LEM_UPDATE_URL", "https://lem.example.org/download")
     p = ClientPolicy()
-    assert p.evaluate("0.1.10")["compatible"]
-    assert p.evaluate("0.1.10")["update_url"] == "https://lem.example.org/download"
+    assert p.evaluate("0.3.10")["compatible"]
+    assert p.evaluate("0.3.10")["update_url"] == "https://lem.example.org/download"
     monkeypatch.setenv("LEM_UPDATE_URL", "http://example.org/download")
     with pytest.raises(ValueError):
         ClientPolicy()
@@ -85,22 +85,49 @@ def test_shipped_policy_accepts_current_app(monkeypatch):
     monkeypatch.delenv("LEM_LATEST_CLIENT_VERSION", raising=False)
     monkeypatch.delenv("LEM_UPDATE_URL", raising=False)
     policy = ClientPolicy()
-    assert policy.minimum == "0.2.0"
-    assert policy.latest == "0.2.0"
-    assert policy.evaluate("0.2.0")["compatible"]
+    assert policy.minimum == "0.2.6"
+    assert policy.latest == "0.3.0"
+    assert not policy.evaluate("0.2.0")["compatible"]
     assert not policy.evaluate("0.2.0")["update_available"]
-    for version in ["0.1.38", "0.1.48", "0.1.51", "0.1.55", "0.1.57", "0.1.58", "0.2.1"]:
+    assert policy.evaluate("0.2.6")["compatible"]
+    assert policy.evaluate("0.2.6")["update_available"]
+    assert policy.evaluate("0.3.0")["compatible"]
+    assert not policy.evaluate("0.3.0")["update_available"]
+    for version in ["0.1.38", "0.1.48", "0.1.51", "0.1.55", "0.1.57", "0.1.58", "0.2.1", "0.2.2", "0.2.3", "0.2.4", "0.2.5"]:
         assert not policy.evaluate(version)["compatible"]
 
 
-def test_shipped_policy_allows_current_login(tmp_path, monkeypatch):
+@pytest.mark.parametrize("version,update", [("0.2.6", True), ("0.3.0", False)])
+def test_shipped_policy_allows_current_login(tmp_path, monkeypatch, version, update):
     monkeypatch.setenv("ADMIN_PASSWORD", "CompatibilityPassword123!")
     monkeypatch.delenv("LEM_MIN_CLIENT_VERSION", raising=False)
     monkeypatch.delenv("LEM_LATEST_CLIENT_VERSION", raising=False)
     monkeypatch.delenv("LEM_UPDATE_URL", raising=False)
     app = create_app("sqlite:///" + str(tmp_path / "release.db"))
-    with TestClient(app, headers={"X-Lem-Client-Version": "0.2.0"}) as client:
-        assert client.get("/api/client-compatibility").json()["compatible"]
+    with TestClient(app, headers={"X-Lem-Client-Version": version}) as client:
+        policy=client.get("/api/client-compatibility").json()
+        assert policy["compatible"] and policy["update_available"] == update
         result = client.post("/api/login", json={
             "email": "admin@lem.pt", "password": "CompatibilityPassword123!"})
         assert result.status_code == 200, result.text
+
+
+@pytest.mark.parametrize('version', ['0.2.2', '0.2.3', '0.2.4', '0.2.5'])
+def test_shipped_photo_rules_block_older_apps_at_login(tmp_path, monkeypatch, version):
+    monkeypatch.setenv('ADMIN_PASSWORD', 'CompatibilityPassword123!')
+    monkeypatch.delenv('LEM_MIN_CLIENT_VERSION', raising=False)
+    monkeypatch.delenv('LEM_LATEST_CLIENT_VERSION', raising=False)
+    app = create_app('sqlite:///' + str(tmp_path / 'old-client.db'))
+    with TestClient(app, headers={'X-Lem-Client-Version': version}) as client:
+        result = client.post('/api/login', json={
+            'email': 'admin@lem.pt', 'password': 'CompatibilityPassword123!'})
+        assert result.status_code == 426, result.text
+        assert not result.json()['detail']['compatible']
+
+
+def test_stale_environment_cannot_lower_the_mandatory_floor(monkeypatch):
+    monkeypatch.setenv("LEM_MIN_CLIENT_VERSION", "0.2.2")
+    monkeypatch.setenv("LEM_LATEST_CLIENT_VERSION", "0.2.5")
+    policy = ClientPolicy()
+    assert policy.minimum == policy.latest == "0.2.6"
+    assert not policy.evaluate("0.2.5")["compatible"]
