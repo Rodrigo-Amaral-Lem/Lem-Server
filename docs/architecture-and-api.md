@@ -141,9 +141,10 @@ blocks; disconnect releases the handle and admission slot. Idle cache budget is 
 with ten-minute expiry checked on access; active leases remain pinned until their responses finish.
 Download overload returns 503 with Retry-After 2 seconds. Export admission retains its separate limit.
 
-`report_corrections` records source revision, editor, original owner, cloned photo mapping and commit
-fingerprint. Editing copies require admin plus `X-Lem-Client-Platform: windows|linux`, and only their
-editor can access them. This header implements a supported-platform policy, not hardware attestation.
+`report_corrections` records source revision, editor, original owner, cloned photo mapping, opening
+station identity and commit fingerprint. Editing copies require admin plus
+`X-Lem-Client-Platform: windows|linux`, and only their editor can access them. This header implements
+a supported-platform policy, not hardware attestation.
 Catalogue projections hide working copies from other users/platforms. Normal report PUT/photo gates
 also apply to correction drafts; only the commit endpoint can replace the source. Ordinary report
 ownership rules remain unchanged. Deletion with `correction_only=true` cannot remove a final report.
@@ -151,8 +152,12 @@ The server console can cancel an orphaned working copy but cannot transfer it or
 while it is active. See the [shared correction contract](../../Common/docs/report-contract.md).
 
 Committing changed EST.02/03/04 answers updates the physical station and replacement snapshot
-atomically. A conflicting newer value returns 409 without deleting the original or changing the
-station; untouched fields stay current. This also supports explicit edits to legacy closed reports.
+atomically. The private `identity_baseline` column captures the current model, manufacturer and
+serial when the correction opens. A conflicting edit after that point returns 409 with reason
+`station_identity_conflict` and preserves the original, correction and catalogue. The nullable
+column is added during database startup. For an existing open copy, the server can use live
+identity as its baseline when the catalogue write is older than the copy. Otherwise it checks
+against the historical identity to protect newer data.
 Committed correction responses include live `station_update` data on POST and GET for client cache
 refresh and lost-response recovery. Retrying the same commit never reapplies its station edits.
 Correction commit takes the station-catalogue lock before charger/report locks, matching ordinary

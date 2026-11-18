@@ -176,6 +176,7 @@ class ReportCorrection(Base):
     original_owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     state: Mapped[str] = mapped_column(String(12), default="editing")
     photo_map: Mapped[dict] = mapped_column(JSON)
+    identity_baseline: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     commit_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created: Mapped[str] = mapped_column(String(50), default=now)
     committed: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -244,6 +245,23 @@ class Audit(Base):
     created: Mapped[str] = mapped_column(String(50), default=now)
 
 
+def migrate_correction_identity(engine):
+    """Add the private conflict baseline without rewriting existing corrections."""
+    with engine.begin() as connection:
+        table = ReportCorrection.__tablename__
+        if any(c["name"] == "identity_baseline" for c in inspect(connection).get_columns(table)):
+            return
+        if connection.dialect.name == "postgresql":
+            # A second worker may have added the column after our schema read.
+            connection.exec_driver_sql(
+                "ALTER TABLE report_corrections ADD COLUMN IF NOT EXISTS identity_baseline JSON")
+        else:
+            # SQLite lacks ADD COLUMN IF NOT EXISTS. Recheck under its writer lock.
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+            if not any(c["name"] == "identity_baseline" for c in inspect(connection).get_columns(table)):
+                connection.exec_driver_sql("ALTER TABLE report_corrections ADD COLUMN identity_baseline JSON")
+
+
 def migrate_stations(engine):
     with engine.begin() as connection:
         columns = {c["name"] for c in inspect(connection).get_columns("chargers")}
@@ -291,6 +309,7 @@ def database(url=None):
             connection.execute("PRAGMA foreign_keys=ON")
 
     Base.metadata.create_all(engine)
+    migrate_correction_identity(engine)
     migrate_stations(engine)
     with engine.begin() as connection:
         connection.execute(

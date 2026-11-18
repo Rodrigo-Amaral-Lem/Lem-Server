@@ -13,6 +13,8 @@ from test_report_corrections import (
     test_cancel_racing_commit_never_removes_both_reports,
 )
 from test_correction_identity import (
+    test_second_admin_corrects_identity_on_a_historical_report,
+    test_upgrade_preserves_pending_corrections_and_checks_later_station_writes,
     test_correction_updates_shared_station_and_preserves_history,
     test_staged_or_cancelled_identity_edit_does_not_change_station,
     test_untouched_legacy_identity_answers_do_not_change_station,

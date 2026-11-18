@@ -3,6 +3,7 @@
 
 """Independent station identity, contract membership, and verified field updates."""
 from copy import deepcopy
+from datetime import datetime
 from sqlalchemy import select, update
 from .models import Station, StationCatalogueLock, Charger, now
 from .measurements import not_applicable
@@ -38,17 +39,38 @@ def get_or_create_station(db, external_id, details, existing=None):
     return station
 
 
-def close_identity(db, charger, report, payload, actor_id, *, correcting_closed=False):
+def identity_values(details):
+    return {field: str(details.get(field) or "").strip() for field in IDENTITY_FIELDS.values()}
+
+
+def correction_identity_reference(correction, station, historical, current):
+    if correction.identity_baseline is not None:
+        return correction.identity_baseline
+    # Existing working copies have no opening baseline. The current identity is
+    # safe to use only if the last catalogue write strictly predates their opening.
+    # With missing or ambiguous dates, keep the historical conflict protection.
+    try:
+        updated = datetime.fromisoformat(station.updated)
+        opened = datetime.fromisoformat(correction.created)
+        if updated.utcoffset() is not None and opened.utcoffset() is not None and updated < opened:
+            return current
+    except (TypeError, ValueError):
+        pass
+    return historical
+
+
+def close_identity(db, charger, report, payload, actor_id, *, correction=None):
     snapshot = deepcopy(report.snapshot)
     # Explicit administrator corrections also support historical templates whose
     # EST identity fields predate automatic station updates on ordinary closure.
-    if report.template.get('version', 0) < 4 and not correcting_closed:
+    if report.template.get('version', 0) < 4 and correction is None:
         return snapshot
     changes = {}
     original = snapshot.get('charger', {})
+    historical = identity_values(original)
     for checkpoint, field in IDENTITY_FIELDS.items():
         value = payload.get('answers', {}).get(checkpoint, {}).get('value', '').strip()
-        if value and not not_applicable(value) and value != str(original.get(field, '') or '').strip():
+        if value and not not_applicable(value) and value != historical[field]:
             if len(value) > 500:
                 raise ValueError(f'{checkpoint}: máximo 500 caracteres')
             changes[field] = value
@@ -61,9 +83,10 @@ def close_identity(db, charger, report, payload, actor_id, *, correcting_closed=
     if station is None:
         raise ValueError('Ficha do carregador indisponível')
     current = dict(station.details or {})
+    current_identity = identity_values(current)
+    reference = correction_identity_reference(correction, station, historical, current_identity) if correction else historical
     for field, value in changes.items():
-        previous = str(original.get(field, '') or '').strip()
-        if str(current.get(field, '') or '').strip() not in (previous, value):
+        if current_identity[field] not in (reference[field], value):
             raise StationConflict('Os dados do carregador foram corrigidos noutro report; atualize antes de concluir. Campo: ' + field)
     station.details = {**current, **changes}
     station.updated = now()

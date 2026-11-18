@@ -140,8 +140,10 @@ separate preparation from transfer; they do not diagnose congestion on a product
 
 `test_correction_identity.py` verifies that closed-report identity edits update all memberships of
 the physical charger, preserve other historical reports, survive stale imports and are rolled back
-with failed replacement. It covers staged/cancelled copies, legacy templates, newer conflicting or
-unrelated values and idempotent retry after another intervention. `test_postgres_corrections.py`
+with failed replacement. A second administrator updates each of the three fields on a historical
+report after the catalogue has changed. The tests also cover a database upgrade with pending copies,
+catalogue writes before and after opening, staged/cancelled copies, legacy templates and idempotent
+opening/commit retries. `test_postgres_corrections.py`
 repeats these checks and replacement/cancellation races using the opt-in PostgreSQL fixture above.
 It also holds the catalogue lock in one transaction and requests correction commit in another;
 the charger must remain available until the correction acquires the catalogue lock. This checks

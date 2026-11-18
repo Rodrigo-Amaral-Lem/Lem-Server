@@ -11,7 +11,7 @@ import os
 import re
 from urllib.parse import urlparse
 
-VERSION = "0.4.0"
+VERSION = "0.4.1"
 # Consolidation changes the release number, not the checklist-v7 protocol floor.
 MINIMUM_CLIENT = "0.2.6"
 HEADER = "X-Lem-Client-Version"

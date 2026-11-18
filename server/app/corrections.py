@@ -11,8 +11,8 @@ import json
 import uuid
 from fastapi import HTTPException
 from sqlalchemy import select, update, delete, literal
-from .models import Report, ReportCorrection, DeletedReport, Photo, Charger, User, now
-from .stations import close_identity, lock_catalogue, StationConflict, IDENTITY_FIELDS
+from .models import Report, ReportCorrection, DeletedReport, Photo, Charger, Station, User, now
+from .stations import close_identity, identity_values, lock_catalogue, StationConflict, IDENTITY_FIELDS
 from .maintenance_migration import persist_upgrade
 
 
@@ -87,7 +87,7 @@ def begin(db, user, source, new_id, revision, current_template=None):
         uuid.UUID(new_id)
     except (ValueError, TypeError, AttributeError):
         raise HTTPException(422, "UUID inválido") from None
-    lock_charger(db, source.charger_id)
+    charger = lock_charger(db, source.charger_id)
     existing = db.get(ReportCorrection, new_id)
     if existing:
         if (existing.source_id, existing.source_revision, existing.editor_id, existing.state) != (
@@ -102,6 +102,10 @@ def begin(db, user, source, new_id, revision, current_template=None):
         raise HTTPException(409, "O report original mudou; atualize antes de iniciar a correção")
     if db.get(Report, new_id) or db.get(DeletedReport, new_id):
         raise HTTPException(409, "Identificador já utilizado")
+    # The report snapshot records an earlier intervention. Read the live station
+    # afresh for conflict detection and keep that baseline across begin retries.
+    station = db.get(Station, charger.station_id, populate_existing=True) if charger.station_id else None
+    identity_baseline = identity_values(station.details or {}) if station is not None else None
     payload = deepcopy(source.payload)
     payload["started"] = payload.get("started") or source.started
     payload["finished"] = payload.get("finished") or source.finished
@@ -125,9 +129,9 @@ def begin(db, user, source, new_id, revision, current_template=None):
             signature["photo_id"] = photo_map.get(signature["photo_id"], signature["photo_id"])
     report.payload = deepcopy(payload)
     persist_upgrade(db, report, current_template, correction=True)
-    correction = ReportCorrection(id=new_id, contract_id=db.get(Charger, source.charger_id).contract_id,
+    correction = ReportCorrection(id=new_id, contract_id=charger.contract_id,
         source_id=source.id, source_revision=revision, editor_id=user.id,
-        original_owner_id=source.owner_id, photo_map=photo_map)
+        original_owner_id=source.owner_id, photo_map=photo_map, identity_baseline=identity_baseline)
     db.add(correction)
     db.flush()
     return report
@@ -163,9 +167,9 @@ def commit(db, user, report, body, validate, current_template=None):
         raise HTTPException(409, "A cópia de correção mudou; atualize antes de guardar")
     started, finished = checked_times(body.payload)
     validate(db, report, body)
-    # Station identity and report replacement share this transaction. Compare
-    # changed fields against the original snapshot under the station lock: an
-    # intervening correction must cause a conflict, never a silent overwrite.
+    # Station identity and report replacement share this transaction. Use the
+    # historical answers to identify edits, and the opening catalogue values to
+    # detect conflicting writes made while the copy was open.
     # Legacy reports can already have answers different from their snapshot.
     # Editing only notes must not publish those old, untouched identity answers.
     original_answers = source.payload.get("answers", {}) if source.template.get("version", 0) >= 6 else {}
@@ -177,9 +181,9 @@ def commit(db, user, report, body, validate, current_template=None):
     }
     try:
         snapshot = close_identity(db, db.get(Charger, report.charger_id), report,
-                                  {"answers": identity_answers}, user.id, correcting_closed=True)
+                                  {"answers": identity_answers}, user.id, correction=correction)
     except StationConflict as error:
-        raise HTTPException(409, str(error)) from error
+        raise HTTPException(409, {"reason": "station_identity_conflict", "message": str(error)}) from error
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
     changed = db.execute(update(Report).where(Report.id == report.id, Report.status == "draft",
