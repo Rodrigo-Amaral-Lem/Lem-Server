@@ -269,6 +269,42 @@ def test_numeric_identifier_masks(setup):
     assert charger["external_id"] == "000012" and charger["details"]["serial"] == "0007"
 
 
+def test_absent_photo_delete_cannot_acknowledge_concurrent_answers(setup):
+    c, h, contract, _ = setup
+    cid = contract["id"]
+    assert upload(c, h, cid, True).status_code == 200
+    charger = c.get(f"/api/contracts/{cid}/chargers", headers=h).json()[0]
+    url = f"/api/reports/{uuid.uuid4()}"
+    photo = f"{url}/photos/{uuid.uuid4()}"
+    body = dict(checklist_version=TEMPLATE["version"], charger_id=charger["id"],
+                base_revision=0, status="draft",
+                payload={"answers": {"FIN.03": {"value": "", "notes": "Original"}}})
+    assert c.put(url, headers=h, json=body).status_code == 200
+    original = c.get(url, headers=h).json()
+    assert original["revision"] == 1
+    assert c.delete(photo, headers=h, params={"base_revision": 1}).json() == {
+        "id": photo.rsplit("/", 1)[1], "deleted": True, "revision": 1,
+    }
+
+    # Device B saves after A has read the report but before A's queued DELETE.
+    body["base_revision"] = 1
+    body["payload"]["answers"]["FIN.03"]["notes"] = "Another device's answer"
+    saved = c.put(url, headers=h, json=body)
+    assert saved.status_code == 200 and saved.json()["revision"] == 2
+    for _ in range(2):
+        stale = c.delete(photo, headers=h, params={"base_revision": 1})
+        assert stale.status_code == 409, stale.text
+
+    # A still has only its old revision. Neither an edit nor closure can use it.
+    original["payload"]["answers"]["EST.18"] = {"value": "", "notes": "Device A edit"}
+    for status in ("draft", "closed"):
+        stale = c.put(url, headers=h, json={**body, "status": status, "payload": original["payload"]})
+        assert stale.status_code == 409, stale.text
+    current = c.get(url, headers=h).json()
+    assert current["revision"] == 2 and current["status"] == "draft"
+    assert current["payload"] == saved.json()["payload"] and current["photos"] == []
+
+
 def test_remove_draft_photo_permissions_revision_retry_and_required_evidence(setup):
     c, h, contract, app = setup
     cid = contract["id"]
@@ -325,9 +361,14 @@ def test_remove_draft_photo_permissions_revision_retry_and_required_evidence(set
     assert removed.status_code == 200 and removed.json()["revision"] == 2
     assert c.get(url, headers=h).status_code == 404
     assert c.get("/api/reports/" + rid, headers=h).json()["photos"] == []
-    assert (
-        c.delete(url + "?base_revision=1", headers=h).json()["revision"] == 2
-    ), "Retry must be idempotent"
+    # Simulate a dropped success response. A retry with the old base must
+    # refresh; after confirming absence, repeats at the observed base are no-ops.
+    assert c.delete(url + "?base_revision=1", headers=h).status_code == 409
+    confirmed = c.get("/api/reports/" + rid, headers=h).json()
+    assert confirmed["revision"] == 2 and confirmed["photos"] == []
+    for _ in range(2):
+        retry = c.delete(url + "?base_revision=2", headers=h)
+        assert retry.status_code == 200 and retry.json()["revision"] == 2
     add_signature(c, h, rid, body["payload"], revision=2)
     assert (
         c.put(

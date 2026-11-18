@@ -1267,7 +1267,7 @@ def create_app(url=None, bootstrap=True):
             raise HTTPException(409, "ID de fotografia já utilizado") from None
         return {"id": pid, "digest": sha}
 
-    # An already absent photograph is an idempotent success; a real removal advances revision.
+    # A current-base no-op is idempotent; a real removal advances revision once.
     @app.delete("/api/reports/{rid}/photos/{pid}")
     def delete_photo(
         rid: str, pid: str, base_revision: int, u=Depends(user_dep), db=Depends(db_dep)
@@ -1291,13 +1291,14 @@ def create_app(url=None, bootstrap=True):
         p = db.get(Photo, pid)
         if p and p.report_id != rid:
             raise HTTPException(404, "Fotografia inexistente neste report")
-        # Idempotent retry after a lost acknowledgement: do not advance revision twice.
-        if not p:
-            return {"id": pid, "deleted": True, "revision": r.revision}
         if r.revision != base_revision:
             raise HTTPException(
                 409, "Report alterado noutro dispositivo; atualize antes de remover"
             )
+        # Even a no-op must respect the revision check. An absent photo cannot
+        # acknowledge newer report answers the client has never received.
+        if not p:
+            return {"id": pid, "deleted": True, "revision": base_revision}
         changed = db.execute(
             update(Report)
             .where(

@@ -105,8 +105,12 @@ every draft template as permanently frozen.
 
 Evidence uploads include `checkpoint` and `base_revision`. Retrying an existing evidence ID
 succeeds only for matching report/checkpoint/digest data; changed bytes under the same ID are
-rejected. Upload/removal admission rechecks owner and revision. Evidence is accepted before the
-final closure request, so a closed local report is normally sent as draft → evidence → closed.
+rejected. Photo DELETE requires a matching `base_revision` even if the evidence is already absent.
+A matching-base no-op returns the same revision. A real removal advances it exactly once. A stale
+request returns HTTP 409. After a lost response, clients can read the full report to verify the
+expected next revision, unchanged payload and absent evidence before continuing. Repeating the
+DELETE at the verified revision is a no-op. Evidence is accepted before the final closure request,
+so a closed local report is normally sent as draft → evidence → closed.
 
 ## Export and background work
 
