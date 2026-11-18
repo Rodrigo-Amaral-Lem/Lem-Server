@@ -12,7 +12,7 @@ prepare = runpy.run_path(str(Path(__file__).resolve().parents[1] / "prepare-conf
 
 
 @pytest.mark.parametrize(
-    "latest,expected", [(version, "0.3.0") for version in ("0.1.28", "0.1.45", "0.1.52", "0.1.57", "0.2.0", "0.2.1", "0.2.2", "0.2.3", "0.2.4", "0.2.5", "0.2.6")]
+    "latest,expected", [(version, "0.3.2") for version in ("0.1.28", "0.1.45", "0.1.52", "0.1.57", "0.2.0", "0.2.1", "0.2.2", "0.2.3", "0.2.4", "0.2.5", "0.2.6", "0.3.0", "0.3.1")]
 )
 def test_promote_pinned_versions_without_changing_secrets(tmp_path, latest, expected):
     env = tmp_path / "old.env"

@@ -185,11 +185,11 @@ deployment. Avoid printing a fully expanded Compose configuration containing sec
 `docker compose --env-file deploy/.env -f deploy/compose.yml config --quiet` validates without
 displaying it.
 
-### Upgrade to 0.3.0
+### Upgrade to 0.3.2
 
-Deploy the matching app and server for checklist v7. Minimum/latest defaults are 0.2.6/0.3.0;
+Deploy the matching app and server for checklist v7. Minimum/latest defaults are 0.2.6/0.3.2;
 old environment values cannot reduce the server's compiled compatibility floor. Existing closed
 reports remain readable; edits through desktop administrator correction use the current form.
 Preserve client storage during app installation so drafts and pending historical uploads survive.
-Compatible 0.2.6 clients may log in with an update notice. The consolidated 0.3.0 numbering does
+Compatible clients from 0.2.6 through 0.3.1 may log in with an update notice. The user-requested 0.3.2 numbering does
 not introduce another schema/protocol change; update the server policy before the new app.
