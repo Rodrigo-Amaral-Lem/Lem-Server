@@ -109,6 +109,27 @@ def test_video_upload_retry_delete_and_required_photo(setup, video):
         assert z.read(f'videos/EST.01/{report["identifier"]}_{pid}.mp4') == video
     assert c.delete(path,headers=h,params={"base_revision":closed.json()["revision"]}).status_code == 409
 
+    # A desktop correction inherits this mixed-media report. Remove one cloned
+    # attachment by ID, then verify the original video bytes in the replacement.
+    from test_report_corrections import start, body
+    admin = {**h, 'X-Lem-Client-Platform': 'windows'}
+    draft = start((c, admin, contract, app, closed.json()))
+    mapping = draft['correction']['photo_map']
+    removed = mapping[trip_path.rsplit('/', 1)[1]]
+    base = f'/api/reports/{draft["id"]}'
+    result = c.delete(f'{base}/photos/{removed}', headers=admin, params={'base_revision': draft['revision']})
+    assert result.status_code == 200, result.text
+    corrected = body(draft)
+    corrected['base_revision'] = result.json()['revision']
+    result = c.post(base + '/correction/commit', headers=admin, json=corrected)
+    assert result.status_code == 200, result.text
+    assert {p['id'] for p in result.json()['photos']} == set(mapping.values()) - {removed}
+    bundle = c.get(base + '/bundle', headers=admin)
+    assert bundle.status_code == 200, bundle.text
+    with ZipFile(BytesIO(bundle.content)) as archive:
+        assert archive.read(f'videos/EST.01/{report["identifier"]}_{mapping[pid]}.mp4') == video
+        assert not any(removed in member for member in archive.namelist())
+
 @pytest.mark.parametrize('duration,accepted', [(60, True), (120, True), (120.5, True), (120.501, False), (0, False)])
 def test_new_duration_boundary(monkeypatch, duration, accepted):
     import json

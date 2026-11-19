@@ -82,6 +82,29 @@ def test_changing_only_start_keeps_public_filename_and_replaces_uuid(correction_
     assert result.json()['identifier']==original['identifier']
 
 
+def test_remove_cloned_evidence_without_reading_its_bytes(correction_case):
+    c, headers, _, app, original = correction_case
+    draft = start(correction_case)
+    photo_id = draft['photos'][0]['id']
+    engine = app.state.factory.kw['bind']
+    queries = []
+
+    def record(connection, cursor, statement, params, context, many):
+        if statement.lstrip().lower().startswith('select'):
+            queries.append(statement.lower())
+
+    event.listen(engine, 'before_cursor_execute', record)
+    try:
+        result = c.delete(f'/api/reports/{draft["id"]}/photos/{photo_id}',
+                          headers=headers, params={'base_revision': draft['revision']})
+    finally:
+        event.remove(engine, 'before_cursor_execute', record)
+    assert result.status_code == 200, result.text
+    assert not any('photos.data' in query for query in queries)
+    assert c.get(f'/api/reports/{draft["id"]}', headers=headers).json()['photos'] == []
+    assert c.get(f'/api/reports/{original["id"]}', headers=headers).json() == original
+
+
 @pytest.mark.parametrize('platform', ['', 'android', 'macos', 'ios', 'web'])
 def test_desktop_only_gate_for_all_staging_operations(correction_case, platform):
     c,h,contract,app,original = correction_case

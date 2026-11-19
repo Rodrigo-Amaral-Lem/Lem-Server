@@ -9,6 +9,7 @@ import pytest
 from test_postgres_branding import postgres_setup
 from test_report_corrections import (
     correction_case,
+    test_remove_cloned_evidence_without_reading_its_bytes,
     test_two_concurrent_corrections_only_one_replaces_and_loser_survives,
     test_cancel_racing_commit_never_removes_both_reports,
 )

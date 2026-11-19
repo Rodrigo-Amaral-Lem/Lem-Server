@@ -2,7 +2,7 @@
 # Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
 
 from .report_extras import validate_extras
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, load_only
 from .stations import (
     close_identity, edit_station, get_or_create_station, lock_catalogue,
     opening_identity, station_record, stations_for_import, StationConflict,
@@ -1433,7 +1433,9 @@ def create_app(url=None, bootstrap=True):
             )
         if r.status != "draft":
             raise HTTPException(409, "Só é possível remover fotografias de reports em rascunho")
-        p = db.get(Photo, pid)
+        # Removing an attachment (including an inherited correction copy) needs
+        # only its identity and owning report. Keep its binary in the database.
+        p = db.get(Photo, pid, options=[load_only(Photo.report_id)])
         if p and p.report_id != rid:
             raise HTTPException(404, "Fotografia inexistente neste report")
         if r.revision != base_revision:
