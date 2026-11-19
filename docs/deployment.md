@@ -185,12 +185,13 @@ deployment. Avoid printing a fully expanded Compose configuration containing sec
 `docker compose --env-file deploy/.env -f deploy/compose.yml config --quiet` validates without
 displaying it.
 
-### Upgrade to 0.4.1
+### Upgrade to 0.5.0
 
-Deploy the server first. Startup adds the nullable correction identity baseline and keeps
-existing reports, photographs and pending correction copies. The new desktop app uses the
-updated server checks when retrying a saved identity conflict. Update the app in place to
-keep local drafts and evidence. Current forms remain on checklist v7.
+Deploy the server before distributing the updated app. Startup updates the station catalogue
+and its contract memberships. Existing reports keep their recorded identity and evidence.
+Older clients can continue to sync using the previous report format. Update clients in place
+to retain offline drafts, then sync them against the updated server. Checklist v7 remains current.
 
-Minimum and latest client defaults are 0.2.6 and 0.4.1. Compatible clients from 0.2.6 through
-0.4.0 may log in and receive an update notice.
+The default minimum client is 0.2.6 and the latest client is 0.5.0. Compatible older clients,
+including 0.4.1, can log in and receive an update notice. Previously issued sessions keep their
+existing expiry. Administrators can revoke sessions with the commands in the administration guide.

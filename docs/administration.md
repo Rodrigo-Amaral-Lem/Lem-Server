@@ -112,10 +112,12 @@ Desktop administrators can import a workbook directly from **IDs de PCVEs** and 
 station from its record. A direct import updates the catalogue independently of contract membership.
 The desktop accepts the Stations template or a first-row header with ID or Identificador. The editor
 checks the station revision before saving and records the administrator action in the audit log.
+The PCVE ID is permanent. The importer discards the site-name field and retains the postal address
+and coordinates. In **Gestão → Contratos → Gerir IDs do contrato**, **Adicionar ou atualizar por Excel** creates or updates the central PCVE and links it to the selected contract. Every linked contract reads that same record. Desktop administrators can also choose **Editar**. **Retirar** preserves the central PCVE and report history. Import the same ID to restore the association.
+Open **Relatórios associados** on the PCVE to browse reports in contracts available to your account.
 
 Closing a report can confirm manufacturer, model and serial via EST.02–EST.04. Concurrent
-inconsistent corrections return a conflict. Historical snapshots are preserved. Use the console's
-`--external-id` option to rename a station.
+inconsistent corrections return a conflict. Historical snapshots are preserved. Supply the permanent PCVE ID when adding a station with the console.
 
 ## Ownership, trash and deletion
 

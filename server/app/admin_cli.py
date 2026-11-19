@@ -20,7 +20,9 @@ import math
 from pathlib import Path
 from sqlalchemy import select, delete, update, func
 from sqlalchemy.exc import IntegrityError
-from .stations import lock_catalogue, get_or_create_station, rename_station
+from .stations import lock_catalogue, get_or_create_station
+from .models import DetachedCharger, attached_charger
+from .import_profiles import clean_station_details, obsolete_station_field
 from .models import (
     database,
     User,
@@ -453,7 +455,7 @@ def charger_commands(db, args):
         return [
             dict(id=x.id, external_id=x.external_id, details=x.details)
             for x in db.scalars(
-                select(Charger).where(Charger.contract_id == c.id).order_by(Charger.external_id)
+                select(Charger).where(Charger.contract_id == c.id, attached_charger()).order_by(Charger.external_id)
             )
         ]
     details = {}
@@ -484,7 +486,6 @@ def charger_commands(db, args):
             "cpe",
             "address",
             "postal_code",
-            "location",
             "manufacturer",
         ):
             # Identifiers such as serial 123 are strings in the app/import model.
@@ -501,23 +502,27 @@ def charger_commands(db, args):
             raise ValueError("Indique --external-id válido")
         lock_catalogue(db)
         station = get_or_create_station(db, args.external_id.strip(), {})
-        charger = Charger(
-            id=str(uuid.uuid4()), contract_id=c.id, external_id=args.external_id.strip(), station=station
-        )
-        db.add(charger)
+        charger = db.scalar(select(Charger).where(Charger.contract_id == c.id, Charger.station_id == station.id))
+        if charger is None:
+            charger = Charger(id=str(uuid.uuid4()), contract_id=c.id, external_id=station.external_id, station=station)
+            db.add(charger)
+        elif marker := db.get(DetachedCharger, charger.id):
+            db.delete(marker)
+        else:
+            raise ValueError("O PCVE já pertence ao contrato")
     else:
         charger = need(db, Charger, args.charger)
         if charger.contract_id != c.id:
             raise ValueError("Carregador não pertence ao contrato indicado")
-        if args.external_id is not None:
-            if not args.external_id.strip() or len(args.external_id.strip()) > 200:
-                raise ValueError("ID externo inválido")
-            rename_station(db, charger, args.external_id.strip())
+        if args.external_id is not None and args.external_id.strip() != charger.external_id:
+            raise ValueError("O ID do PCVE é permanente.")
     if "external_id" in details:
         raise ValueError(
-            "external_id não pertence aos detalhes; use --external-id para alterar o ID do carregador"
+            "external_id não pertence aos detalhes; o ID do PCVE é permanente"
         )
-    merged = {**(charger.details or {}), **details}
+    if any(obsolete_station_field(key) for key in details):
+        raise ValueError("Campo excluído da ficha do PCVE.")
+    merged = clean_station_details({**(charger.details or {}), **details})
     # Old metadata cannot shadow the authoritative Charger.external_id column.
     merged.pop("external_id", None)
     # Console JSON must follow the same scalar/string contract as imports and
@@ -528,7 +533,6 @@ def charger_commands(db, args):
         "cpe",
         "address",
         "postal_code",
-        "location",
         "manufacturer",
         "region",
         "energy_supply",
@@ -639,7 +643,7 @@ def parser():
         cmd.add_argument("contract")
         if name == "update":
             cmd.add_argument("charger")
-        cmd.add_argument("--external-id")
+        cmd.add_argument("--external-id", help=argparse.SUPPRESS if name == "update" else "ID permanente do PCVE")
         cmd.add_argument("--details-json", help="Objeto JSON; update mantém as outras chaves")
         cmd.add_argument(
             "--set", action="append", help="campo=valor (repetível); valor JSON ou texto"

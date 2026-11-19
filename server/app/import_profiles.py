@@ -6,6 +6,8 @@
 
 """Versioned source layouts; required columns are enforced by the server."""
 
+import re
+
 STATIONS_PROFILE = "lem-stations-v1"
 # column, field, source header, required
 STATIONS_COLUMNS = [
@@ -29,11 +31,9 @@ FIELDS = [
     "manufacturer",
     "model",
     "serial",
-    "location",
     "address",
     "cpe",
     "power",
-    "site_id",
     "postal_code",
     "latitude",
     "longitude",
@@ -42,6 +42,35 @@ FIELDS = [
     "power_limit",
     "connectors",
 ]
+
+
+# Older import profiles and old catalogues may contain both mapped fields
+# and arbitrary Excel headers. Keep the postal address and coordinates.
+def obsolete_station_field(key):
+    extra = str(key).startswith("extra.")
+    key = str(key).removeprefix("extra.").casefold().replace("_", " ")
+    if extra and key in {"id", "external id", "station id", "id do pcve", "id de pcve", "identificador"}:
+        return True
+    return " ".join(key.split()) in {
+        "location", "localização", "localizacao", "local", "nome do local",
+        "site name", "localização / nome do local", "localizacao / nome do local",
+        "site id", "id do site",
+    }
+
+
+def clean_station_details(details):
+    result = {k: v for k, v in (details or {}).items() if not obsolete_station_field(k)}
+    # Some Portuguese workbook exports contain Ý/ý where a cedilla precedes
+    # a/o/u. Identifiers, serials and technical model codes are left verbatim.
+    for field in ("address", "region", "manufacturer", "energy_supply"):
+        value = result.get(field)
+        if isinstance(value, str) and ("Ý" in value or "ý" in value):
+            value = re.sub(r"(?<=[a-zà-öø-ÿ])Ý(?=[aouãõáàâóôú])", "ç", value)
+            result[field] = re.sub(r"([Ýý])(?=[aouãõáàâóôú])",
+                                   lambda match: "Ç" if match[1] == "Ý" else "ç", value, flags=re.I)
+    if isinstance(result.get("source"), dict):
+        result["source"] = {k: v for k, v in result["source"].items() if not obsolete_station_field(k)}
+    return result
 
 
 def is_stations_header(header):

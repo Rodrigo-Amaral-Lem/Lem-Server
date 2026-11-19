@@ -7,7 +7,7 @@ from datetime import datetime
 import re
 from sqlalchemy import select, update
 from .checklist import connector_names, connector_text
-from .import_profiles import FIELDS
+from .import_profiles import FIELDS, clean_station_details, obsolete_station_field
 from .models import Station, StationCatalogueLock, Charger, now
 from .measurements import not_applicable
 import uuid
@@ -60,6 +60,10 @@ def edit_station(station, base_updated, edits, actor_id):
     details = station.details or {}
     changes = {}
     for field, raw in edits.items():
+        if obsolete_station_field(field):
+            if not raw.strip():
+                continue  # Older clients may submit empty legacy fields.
+            raise ValueError("Este campo não faz parte da ficha do PCVE.")
         if field not in EDITABLE_FIELDS and not (field.startswith("extra.") and field in details):
             raise ValueError("Campo da estação inválido: " + field[:100])
         value = raw.strip()
@@ -81,7 +85,7 @@ def edit_station(station, base_updated, edits, actor_id):
         return False
     if base_updated != station.updated:
         raise StationConflict("A ficha mudou no servidor. Atualize os IDs e volte a abrir a edição.")
-    station.details = {**details, **changes}
+    station.details = clean_station_details({**details, **changes})
     station.updated = now()
     # Keep the protection of previously verified identity fields. Record the
     # administrator as the source of any replacement for a verified value.
@@ -94,6 +98,7 @@ def edit_station(station, base_updated, edits, actor_id):
 
 
 def get_or_create_station(db, external_id, details, existing=None):
+    details = clean_station_details(details)
     station = existing.get(external_id) if existing is not None else db.scalar(select(Station).where(Station.external_id == external_id))
     if station is None:
         station = Station(id=str(uuid.uuid4()), external_id=external_id, details=dict(details), verified_fields={})
@@ -107,6 +112,22 @@ def get_or_create_station(db, external_id, details, existing=None):
 
 def identity_values(details):
     return {field: str(details.get(field) or "").strip() for field in IDENTITY_FIELDS.values()}
+
+
+def opening_identity(charger, supplied, answers):
+    """Freeze only the three prefilled fields. All IDs and contract data belong to the server."""
+    if supplied is not None:
+        observed = supplied.model_dump()
+    else:
+        # Older clients send only answers. A value already present on first upload
+        # might be a stale prefill. Retain it in the report without verifying it
+        # against the shared station; a later explicit change can still update it.
+        observed = {}
+        for checkpoint, field in IDENTITY_FIELDS.items():
+            value = answers.get(checkpoint, {}).get("value", "").strip()
+            if value and not not_applicable(value):
+                observed[field] = value
+    return {**charger, **{k: v for k, v in observed.items() if v or k in charger}}
 
 
 def correction_identity_reference(correction, station, historical, current):
@@ -162,14 +183,3 @@ def close_identity(db, charger, report, payload, actor_id, *, correction=None):
     }}
     snapshot['charger'] = {**original, **changes}
     return snapshot
-
-
-def rename_station(db, charger, external_id):
-    lock_catalogue(db)
-    duplicate = db.scalar(select(Station).where(Station.external_id == external_id))
-    if duplicate is not None and duplicate.id != charger.station_id:
-        raise ValueError('Já existe outro carregador com esse ID')
-    charger.station.external_id = external_id
-    charger.station.updated = now()
-    db.execute(update(Charger).where(Charger.station_id == charger.station_id).values(external_id=external_id))
-    charger.external_id = external_id

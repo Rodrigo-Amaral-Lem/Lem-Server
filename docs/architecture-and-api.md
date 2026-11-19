@@ -13,7 +13,7 @@ deployment uses PostgreSQL.
 | [models.py](../server/app/models.py) | Tables, SQLite/PostgreSQL session creation and explicit station/index upgrades |
 | [security.py](../server/app/security.py), [compatibility.py](../server/app/compatibility.py) | Credential/token primitives, login buckets and admitted client-version interval |
 | [checklist.py](../server/app/checklist.py), [measurements.py](../server/app/measurements.py), [report_extras.py](../server/app/report_extras.py) | Connector expansion, editable-v6 corrections, reading and signature/copy validation |
-| [stations.py](../server/app/stations.py) | Shared physical station identity, verified fields and canonical rename/closure checks |
+| [stations.py](../server/app/stations.py) | Shared physical station identity, immutable PCVE IDs, verified fields and closure checks |
 | [importer.py](../server/app/importer.py), [import_profiles.py](../server/app/import_profiles.py) | Bounded Excel parsing, mapping and built-in Stations layout |
 | [images.py](../server/app/images.py), [media.py](../server/app/media.py) | Actual image/video inspection rather than trusting filename/MIME |
 | [pdf_report.py](../server/app/pdf_report.py), [exports.py](../server/app/exports.py) | Snapshot-based PDF rendering and bounded PDF/JSON/media ZIP output |
@@ -78,6 +78,8 @@ are enabled only when `LEM_API_DOCS=1`.
 | GET `/api/admin/deleted-contracts`; POST `/api/contracts/{cid}/trash`, `/restore` | Contract trash workflow |
 | GET `/api/contracts/{cid}/chargers` | Contract memberships with the current central station details and report summaries |
 | GET `/api/stations` | One record per PCVE across all active assigned contracts for technicians, or the entire catalogue for administrators |
+| GET `/api/stations/{sid}/reports` | Accessible active-contract report summaries, including history of removed memberships; correction visibility follows the report rules |
+| DELETE `/api/contracts/{cid}/chargers/{charger_id}` | Administrator removes only the contract membership. Repeated requests are idempotent; reimporting restores the membership UUID |
 | POST `/api/stations/import`; PATCH `/api/stations/{sid}` | Desktop administrator Excel preview and atomic import, or revision-checked edit |
 | GET `/api/companies/{company}/import-profile` | Saved mapping |
 | POST `/api/imports/analyse`, `/api/contracts/{cid}/import` | Excel analysis, preview and atomic import |
@@ -106,8 +108,14 @@ station details while preserving the snapshots of earlier reports.
 
 ## Report write lifecycle
 
-A report PUT includes `checklist_version`, `charger_id`, `base_revision`, `status` and `payload`
-; connector metadata may also be supplied for new work. A new report begins at base revision zero.
+A report PUT includes `checklist_version`, `charger_id`, `base_revision`, `status` and `payload`.
+On first upload the app sends `station_identity_at_start` with the manufacturer, model and serial
+from the device's opening snapshot. This reference stays frozen over retries. Closure changes the
+shared station only for a technician correction that passes the concurrent-value check.
+For older clients the server treats identity answers already present on first upload as observations.
+Later edits are compared with those values. Connector metadata may also be supplied for new work.
+Report responses include the physical `station_id` even when the historical snapshot predates the catalogue.
+A new report begins at base revision zero.
 Existing reports must match their saved checklist version, charger and known revision.
 
 Only the current owner may update answers/evidence or close a report, including when the caller

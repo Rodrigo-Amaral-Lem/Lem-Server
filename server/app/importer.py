@@ -21,6 +21,8 @@ if not DEFUSEDXML:
 
 from .import_profiles import (
     FIELDS,
+    obsolete_station_field,
+    clean_station_details,
     STATIONS_COLUMNS,
     STATIONS_PROFILE,
     is_stations_header,
@@ -165,8 +167,9 @@ def parse(data, mapping):
         if not columns.get("external_id"):
             raise HTTPException(422, "Mapeie external_id")
         indexes = {}
+        ignored_headers = {label for key, label in columns.items() if obsolete_station_field(key) and isinstance(label, str)}
         for key, label in columns.items():
-            if not label:
+            if not label or obsolete_station_field(key) or obsolete_station_field(label):
                 continue
             if header.count(label) != 1:
                 raise HTTPException(422, f"Cabeçalho inexistente ou ambíguo: {label}")
@@ -193,7 +196,7 @@ def parse(data, mapping):
                 continue
             rec = {
                 key: (
-                    cell_text(values[i], key in ["external_id", "serial", "cpe", "site_id"])
+                    cell_text(values[i], key in ["external_id", "serial", "cpe"])
                     if i < len(values)
                     else ""
                 )
@@ -234,8 +237,14 @@ def parse(data, mapping):
             rec["source"] = {
                 label: cell_text(values[i]) if i < len(values) else ""
                 for i, label in enumerate(header)
-                if label
+                if label and label not in ignored_headers and not obsolete_station_field(label)
             }
+            rec = clean_station_details(rec)
+            # Preview the same spelling that the live station will display, even
+            # when a custom column name supplied the postal address.
+            for field in ("address", "region", "manufacturer", "energy_supply"):
+                if field in indexes:
+                    rec["source"][header[indexes[field]]] = rec[field]
             records.append({"external_id": ext, "details": rec})
         return {
             "records": records,

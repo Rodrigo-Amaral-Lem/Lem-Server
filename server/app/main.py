@@ -5,7 +5,7 @@ from .report_extras import validate_extras
 from sqlalchemy.orm import joinedload
 from .stations import (
     close_identity, edit_station, get_or_create_station, lock_catalogue,
-    station_record, stations_for_import, StationConflict,
+    opening_identity, station_record, stations_for_import, StationConflict,
 )
 # FastAPI composition root: dependencies, authorization and transactional endpoints.
 # All handlers are registered inside create_app so tests can supply an isolated DB.
@@ -34,6 +34,8 @@ from .models import (
     ContractTrash,
     Assignment,
     Charger,
+    DetachedCharger,
+    attached_charger,
     Station,
     Report,
     ReportCorrection,
@@ -124,7 +126,14 @@ class TrashContractInput(BaseModel):
     confirmation: str = Field(max_length=20)
 
 
+class OpeningStationIdentity(BaseModel):
+    manufacturer: str = Field(max_length=32767)
+    model: str = Field(max_length=32767)
+    serial: str = Field(max_length=32767)
+
+
 class ReportInput(BaseModel):
+    station_identity_at_start: OpeningStationIdentity | None = None
     # A v6 report already closed offline still uploads photos in a draft staging phase.
     frozen_history: bool = Field(default=False, strict=True)
     checklist_version: int = Field(ge=1, strict=True)
@@ -385,6 +394,7 @@ def create_app(url=None, bootstrap=True):
         return {
             "id": r.id,
             "contract_id": contract_id,
+            "station_id": charger.station_id,
             "presentation": contract_presentation(db, contract_id),
             "identifier": report_identifier({"snapshot": r.snapshot}),
             "charger_id": r.charger_id,
@@ -696,24 +706,69 @@ def create_app(url=None, bootstrap=True):
                 "report_replacements": {rid: replacements[rid] for rid in removed.get(c.id, []) if rid in replacements},
             }
             for c in db.scalars(
-                select(Charger).options(joinedload(Charger.station)).where(Charger.contract_id == cid).order_by(Charger.external_id)
+                select(Charger).options(joinedload(Charger.station)).where(Charger.contract_id == cid, attached_charger()).order_by(Charger.external_id)
             )
         ]
 
-    @app.get("/api/stations")
-    def station_catalogue(u=Depends(user_dep), db=Depends(db_dep)):
+    def visible_stations(u):
         query = select(Station).order_by(Station.external_id)
         if u.role != "admin":
             # EXISTS gives one row per physical station even when multiple
             # active, assigned contracts include that station.
             assigned = (select(Charger.id)
                         .join(Assignment, Assignment.contract_id == Charger.contract_id)
-                        .where(Charger.station_id == Station.id, Assignment.user_id == u.id,
+                        .where(Charger.station_id == Station.id, Assignment.user_id == u.id, attached_charger(),
                                ~select(ContractTrash.contract_id)
                                .where(ContractTrash.contract_id == Charger.contract_id).exists())
                         .exists())
             query = query.where(assigned)
-        return [station_record(station) for station in db.scalars(query)]
+        return query
+
+    @app.get("/api/stations")
+    def station_catalogue(u=Depends(user_dep), db=Depends(db_dep)):
+        return [station_record(station) for station in db.scalars(visible_stations(u))]
+
+    @app.delete("/api/contracts/{cid}/chargers/{charger_id}")
+    def detach_charger(cid: str, charger_id: str, u=Depends(admin), db=Depends(db_dep)):
+        accessible(db, u, cid, write=True)
+        lock_catalogue(db)
+        charger = db.scalar(select(Charger).where(Charger.id == charger_id, Charger.contract_id == cid)
+                            .with_for_update())
+        if charger is None:
+            raise HTTPException(404, "PCVE inexistente neste contrato")
+        if not db.get(DetachedCharger, charger_id):
+            db.add(DetachedCharger(charger_id=charger_id))
+            audit(db, u, "contract.detach-pcve", charger_id)
+        db.commit()
+        return {"ok": True}
+
+    @app.get("/api/stations/{sid}/reports")
+    def station_reports(sid: str, u=Depends(user_dep), db=Depends(db_dep)):
+        if db.scalar(visible_stations(u).where(Station.id == sid)) is None:
+            raise HTTPException(404, "PCVE inexistente")
+        # Historical memberships remain valid for report history. Contracts in
+        # the trash and other users' correction drafts follow the normal gates.
+        query = (select(Report.id, Report.charger_id, Report.status, Report.started, Report.finished, Contract.name.label("contract"),
+                        Contract.id.label("contract_id"),
+                        Report.snapshot["charger"]["external_id"].as_string().label("pcve"),
+                        Report.snapshot["contract"]["name"].as_string().label("original_contract"))
+                 .join(Charger, Charger.id == Report.charger_id)
+                 .join(Contract, Contract.id == Charger.contract_id)
+                 .outerjoin(ReportCorrection, ReportCorrection.id == Report.id)
+                 .where(Charger.station_id == sid, ~select(ContractTrash.contract_id)
+                        .where(ContractTrash.contract_id == Contract.id).exists())
+                 .order_by(Report.started.desc(), Report.id))
+        if u.role != "admin":
+            query = query.join(Assignment, Assignment.contract_id == Contract.id).where(Assignment.user_id == u.id)
+        allow_corrections = u.role == "admin" and db.info.get("client_platform") in ("windows", "linux")
+        visible = (ReportCorrection.id.is_(None) | (ReportCorrection.state != "editing"))
+        if allow_corrections:
+            visible = visible | (ReportCorrection.editor_id == u.id)
+        return [{"id": row.id, "charger_id": row.charger_id, "status": row.status, "contract": row.contract,
+                 "contract_id": row.contract_id, "started": row.started, "finished": row.finished,
+                 "identifier": report_identifier({"snapshot": {"charger": {"external_id": row.pcve},
+                                                              "contract": {"name": row.original_contract}}})}
+                for row in db.execute(query.where(visible))]
 
     @app.patch("/api/stations/{sid}")
     def save_station(sid: str, body: StationEdit, u=Depends(station_admin), db=Depends(db_dep)):
@@ -834,6 +889,7 @@ def create_app(url=None, bootstrap=True):
             station = get_or_create_station(db, rec["external_id"], rec["details"], stations)
             c = existing.get(rec["external_id"])
             if c:
+                db.execute(delete(DetachedCharger).where(DetachedCharger.charger_id == c.id))
                 c.station = station
                 changed += 1
             else:
@@ -1014,7 +1070,7 @@ def create_app(url=None, bootstrap=True):
             raise HTTPException(404, "Carregador inexistente")
         contract = accessible(db, u, charger.contract_id)
         # Shared-identity mutations use catalogue -> membership lock order,
-        # including console renames that update all contract memberships.
+        # including contract membership changes.
         if body.status == "closed":
             lock_catalogue(db)
         # Always lock the contract before its charger, matching trash/purge.
@@ -1024,6 +1080,7 @@ def create_app(url=None, bootstrap=True):
         # Serialize answer/closure validation with photo writes and ownership changes.
         r = db.scalar(select(Report).where(Report.id == rid).with_for_update()
                       .execution_options(populate_existing=True))
+        creating = r is None
         if r:
             # Authorize and check the revision before migrating. Validation below
             # atomically upgrades editable v6 data and checks the resulting schema.
@@ -1039,6 +1096,8 @@ def create_app(url=None, bootstrap=True):
             if r.status == "closed":
                 raise HTTPException(409, "Report fechado é imutável; crie nova intervenção")
         else:
+            if db.get(DetachedCharger, charger.id):
+                raise HTTPException(409, "Este PCVE foi retirado do contrato. O rascunho local foi conservado.")
             legacy_closed = body.checklist_version == 6 and (body.status == "closed" or body.frozen_history)
             if body.checklist_version != TEMPLATE["version"] and not legacy_closed:
                 raise HTTPException(409, "A checklist mudou. Crie um novo report; o rascunho antigo foi conservado para consulta")
@@ -1083,6 +1142,12 @@ def create_app(url=None, bootstrap=True):
             db.add(r)
             db.flush()
         validate_report_payload(db, r, body)
+        if creating and r.template.get("version", 0) >= 4:
+            # Freeze the identity once. Subsequent edits and retried uploads cannot
+            # replace the reference used to detect a concurrent catalogue change.
+            opening = opening_identity(r.snapshot["charger"], body.station_identity_at_start,
+                                       body.payload.get("answers", {}))
+            r.snapshot = {**r.snapshot, "charger": opening}
         next_snapshot = r.snapshot
         if body.status == "closed":
             try:

@@ -21,6 +21,7 @@ from sqlalchemy import (
     inspect,
     select,
 )
+from .import_profiles import clean_station_details
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker, relationship
 
 
@@ -146,6 +147,42 @@ class Charger(Base):
             self.station.updated = now()
         else:
             self.legacy_details = value
+
+
+class DetachedCharger(Base):
+    """Keep membership UUIDs for existing reports after removal from a contract."""
+    __tablename__ = "detached_chargers"
+    charger_id: Mapped[str] = mapped_column(ForeignKey("chargers.id", ondelete="CASCADE"), primary_key=True)
+
+
+def attached_charger():
+    return ~select(DetachedCharger.charger_id).where(DetachedCharger.charger_id == Charger.id).exists()
+
+
+class DataMigration(Base):
+    __tablename__ = "completed_data_migrations"
+    name: Mapped[str] = mapped_column(String(80), primary_key=True)
+
+
+def clean_existing_station_data(engine):
+    # The marker and both updates commit together. Concurrent startup waits
+    # for the first transaction; an interrupted cleanup is retried.
+    with engine.begin() as connection:
+        claimed = connection.execute(text(
+            "INSERT INTO completed_data_migrations (name) VALUES ('pcve-current-fields-v1') "
+            "ON CONFLICT (name) DO NOTHING RETURNING name"
+        )).first()
+        if claimed is None:
+            return
+        for model in (Station, Charger):
+            table = model.__table__
+            for key, data in connection.execute(select(table.c.id, table.c.details)):
+                clean = clean_station_details(data)
+                if data and clean != data:
+                    values = {"details": clean}
+                    if model is Station:
+                        values["updated"] = now()
+                    connection.execute(table.update().where(table.c.id == key).values(**values))
 
 
 # Mutable owner-controlled draft or immutable closed report. snapshot/template freeze
@@ -312,6 +349,7 @@ def database(url=None):
     Base.metadata.create_all(engine)
     migrate_correction_identity(engine)
     migrate_stations(engine)
+    clean_existing_station_data(engine)
     with engine.begin() as connection:
         connection.execute(
             text("INSERT INTO account_admin_lock (id) VALUES (1) ON CONFLICT (id) DO NOTHING")

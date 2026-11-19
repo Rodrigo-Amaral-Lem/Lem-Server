@@ -85,6 +85,17 @@ def test_direct_import_then_contract_import_keeps_one_station(setup):
     assert all(link["station_id"] == global_id and link["station_updated"] == canonical["updated"] and
                link["details"] == canonical["details"] for link in links)
 
+    # One contract workbook can both add an ID and update another across the catalogue.
+    batch = excel(("PCVE-01", "Novo modelo"), ("PCVE-NOVO", "Novo"))
+    assert upload(client, admin, cid, True, batch).json() == {"created": 1, "updated": 1}
+    central = {row["external_id"]: row for row in read(client, admin)}
+    canonical = central["PCVE-01"]
+    assert canonical["id"] == global_id and canonical["details"]["model"] == "Novo modelo"
+    for contract_id in (cid, other):
+        rows = client.get(f"/api/contracts/{contract_id}/chargers", headers=admin).json()
+        assert rows[0]["details"] == canonical["details"]
+        assert [row["station_id"] for row in rows[1:]] == ([central["PCVE-NOVO"]["id"]] if contract_id == cid else [])
+
     # Purging the last membership also leaves this independent record available.
     for key in (cid, other):
         assert client.post(f"/api/contracts/{key}/trash", headers=admin, json={"confirmation": "APAGAR"}).status_code == 200
@@ -181,3 +192,88 @@ def test_concurrent_contract_and_direct_import_share_identity(setup):
     station, = read(client, admin)
     link, = client.get(f"/api/contracts/{first['id']}/chargers", headers=admin).json()
     assert station["id"] == link["station_id"]
+
+
+def test_detach_preserves_reports_and_reimport_reuses_membership(setup):
+    from uuid import uuid4
+    from app.main import TEMPLATE
+
+    client, admin, first, _ = setup
+    cid, other = first["id"], second_contract(client, admin)
+    for contract in (cid, other):
+        assert upload(client, admin, contract, True, excel(("PCVE-FIXO", "Original"))).status_code == 200
+    tech = technician(client, admin, other)
+    links = [client.get(f"/api/contracts/{key}/chargers", headers=admin).json()[0] for key in (cid, other)]
+    rid, body, original = draft(client, admin, links[0])
+    other_report, _, _ = draft(client, admin, links[1])
+    sid = links[0]["station_id"]
+    history = f"/api/stations/{sid}/reports"
+    detach = f"/api/contracts/{cid}/chargers/{links[0]['id']}"
+    assert client.delete(detach, headers=tech).status_code == 403
+    assert client.delete(detach.replace(cid, other), headers=admin).status_code == 404
+    for attempt in range(2):
+        assert client.delete(detach, headers=admin).status_code == 200
+    assert client.get(f"/api/contracts/{cid}/chargers", headers=admin).json() == []
+    assert len(client.get(f"/api/contracts/{other}/chargers", headers=admin).json()) == 1
+    assert {r["id"] for r in client.get(history, headers=admin).json()} == {rid, other_report}
+    assert {r["id"] for r in client.get(history, headers=tech).json()} == {other_report}
+    assert client.get(f"/api/reports/{rid}", headers=admin).json()["snapshot"] == original["snapshot"]
+    assert client.put(f"/api/reports/{rid}", headers=admin, json=body).status_code == 200
+    new_body = {"checklist_version": TEMPLATE["version"], "charger_id": links[0]["id"],
+                "base_revision": 0, "payload": {}}
+    assert client.put(f"/api/reports/{uuid4()}", headers=admin, json=new_body).status_code == 409
+    assert upload(client, admin, cid, True, excel(("PCVE-FIXO", "Atualizado"))).status_code == 200
+    restored, = client.get(f"/api/contracts/{cid}/chargers", headers=admin).json()
+    assert restored["id"] == links[0]["id"] and restored["station_id"] == sid
+    assert restored["reports"][0]["id"] == rid
+
+
+def test_import_and_upgrade_clean_live_fields_and_preserve_snapshots(setup):
+    from app.models import Charger, DataMigration, Report, clean_existing_station_data
+
+    client, admin, contract, app = setup
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.title = "Parque"
+    sheet.append(["ID", "Morada", "Localização / nome do local", "ID do site", "Latitude"])
+    sheet.append(["PCVE-FIXO", "ESTRADA DOS CALIÝOS, EstaÝão", "Local excluído", "OUTRO", "37.0"])
+    output = BytesIO()
+    book.save(output)
+    mapping = {"sheet": "Parque", "columns": {"external_id": "ID", "address": "Morada",
+               "location": "Localização / nome do local", "extra.ID do site": "ID do site", "latitude": "Latitude"}}
+    response = client.post(f"/api/contracts/{contract['id']}/import", headers=admin,
+                           files={"file": ("dados.xlsx", output.getvalue())},
+                           data={"mapping": json.dumps(mapping), "commit": "true"})
+    assert response.status_code == 200, response.text
+    link, = client.get(f"/api/contracts/{contract['id']}/chargers", headers=admin).json()
+    assert link["details"]["address"] == "ESTRADA DOS CALIÇOS, Estação"
+    assert link["details"]["latitude"] == "37.0"
+    assert link["details"]["source"]["Morada"] == link["details"]["address"]
+    assert not {"Localização / nome do local", "ID do site"} & link["details"]["source"].keys()
+    assert not {"location", "site_id", "extra.ID do site"} & link["details"].keys()
+    rid, _, before = draft(client, admin, link)
+    from test_review_050 import command
+    import pytest
+    with pytest.raises(ValueError, match="permanente"):
+        command(app, ["chargers", "update", contract["id"], link["id"], "--external-id", "OUTRO"])
+    windows = {**admin, "X-Lem-Client-Platform": "windows"}
+    for key in ("external_id", "site_id", "extra.ID do PCVE"):
+        result = client.patch(f"/api/stations/{link['station_id']}", headers=windows,
+                              json={"base_updated": link["station_updated"], "fields": {key: "OUTRO"}})
+        assert result.status_code == 422
+    with app.state.factory() as db:
+        station = db.get(Station, link["station_id"])
+        bad = {"location": "Local excluído", "site_id": "OUTRO", "address": "CALIÝOS", "latitude": "37.0",
+               "source": {"Localização / nome do local": "Local excluído", "Modelo": "Leia"}}
+        station.details = dict(bad)
+        db.get(Charger, link["id"]).legacy_details = dict(bad)
+        db.delete(db.get(DataMigration, "pcve-current-fields-v1"))
+        engine = db.get_bind()
+        db.commit()
+    for attempt in range(2):
+        clean_existing_station_data(engine)
+    with app.state.factory() as db:
+        clean = db.get(Station, link["station_id"]).details
+        assert clean == {"address": "CALIÇOS", "latitude": "37.0", "source": {"Modelo": "Leia"}}
+        assert db.get(Charger, link["id"]).legacy_details == clean
+        assert db.get(Report, rid).snapshot == before["snapshot"]
