@@ -71,7 +71,9 @@ are enabled only when `LEM_API_DOCS=1`.
 | GET `/api/contracts/{cid}/presentation` | Current authorized contract presentation before online export |
 | PUT `/api/contracts/{cid}/users/{user_id}` | Assign access |
 | GET `/api/admin/deleted-contracts`; POST `/api/contracts/{cid}/trash`, `/restore` | Contract trash workflow |
-| GET `/api/contracts/{cid}/chargers` | Lightweight catalogue and report summaries |
+| GET `/api/contracts/{cid}/chargers` | Contract memberships with the current central station details and report summaries |
+| GET `/api/stations` | One record per PCVE across all active assigned contracts for technicians, or the entire catalogue for administrators |
+| POST `/api/stations/import`; PATCH `/api/stations/{sid}` | Desktop administrator Excel preview and atomic import, or revision-checked edit |
 | GET `/api/companies/{company}/import-profile` | Saved mapping |
 | POST `/api/imports/analyse`, `/api/contracts/{cid}/import` | Excel analysis, preview and atomic import |
 | GET `/api/reports/{rid}/exists`, `/api/reports/{rid}` | Creation retry probe / full report |
@@ -82,6 +84,20 @@ are enabled only when `LEM_API_DOCS=1`.
 | POST `/api/reports/{rid}/correction/commit` | Validate and atomically replace the closed source using a full ReportInput |
 | PUT/GET/DELETE `/api/reports/{rid}/photos/{pid}` | Evidence bytes and removals |
 | GET `/api/reports/{rid}/pdf`, `/api/reports/{rid}/bundle` | Export an eligible closed report |
+
+## Station catalogue
+
+A station is keyed by its unique spreadsheet ID. Contract membership retains its own UUID for
+reports and permissions. The station list returns the physical UUID, external ID, details and
+`updated` revision. Contract rows expose that revision as `station_updated`. The station PATCH
+accepts `base_updated` and a map of changed fields. The server returns 409 when a conflicting edit
+has advanced the revision.
+
+Station and contract imports run the same Excel parser and merge into the same station records.
+Station imports can create records before assignment to a contract. Contract imports also create
+membership links. Preview is read-only. Previously verified identity fields survive workbook
+imports and can be changed explicitly through the station editor. Closing a report can update the
+station details while preserving the snapshots of earlier reports.
 
 ## Report write lifecycle
 
