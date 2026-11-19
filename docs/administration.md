@@ -4,6 +4,13 @@ Use an account authorized for the target installation. Administrative commands m
 selected by `DATABASE_URL`; verify the target before editing or deleting data. Run local examples
 from the **Server repository root**, and keep local logs/test data in ignored `build/`.
 
+## Changing your own password
+
+Technicians and administrators can open **Conta e ligação → Alterar a minha password**.
+Enter the current password, enter the new password twice (12–200 characters) and select
+**Guardar password**. The current session stays active with its original expiry. Other
+devices must sign in again. The server records the account ID and `user.password.change`.
+
 ## Technician password reset in the app
 
 An authenticated administrator can open **Gestão → Contas e acessos**, select a technician and
