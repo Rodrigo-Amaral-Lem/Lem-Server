@@ -304,6 +304,11 @@ def test_ancient_closed_correction_preserves_content_and_enforces_current_form(s
     assert c.get("/api/reports/" + rid, headers=h).json() == original
     data["payload"]["answers"].update(answers())
     add_signature(c, h, draft["id"], data["payload"], revision=draft["revision"])
+    broken = deepcopy(data)
+    broken["payload"]["legacy_signatures"]["FIN.02"]["photo_id"] = original["photos"][0]["id"]
+    rejected = c.post(path + "/correction/commit", headers=h, json=broken)
+    assert rejected.status_code == 422 and "histórica" in rejected.json()["detail"]
+    assert c.get("/api/reports/" + rid, headers=h).json() == original
     saved = c.post(path + "/correction/commit", headers=h, json=data)
     assert saved.status_code == 200, saved.text
     assert saved.json()["template"]["version"] == 7

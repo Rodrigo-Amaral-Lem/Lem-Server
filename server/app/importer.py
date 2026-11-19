@@ -121,6 +121,7 @@ def cell_text(cell, identifier=False):
 # Resolve explicit headers, collect row/cell errors, and return records without writing the DB.
 def parse(data, mapping, *, contract_notes=True):
     w = workbook(data)
+    formulas = None
     try:
         sheet = mapping.get("sheet")
         if sheet not in w.sheetnames:
@@ -151,6 +152,14 @@ def parse(data, mapping, *, contract_notes=True):
         columns = mapping.get("columns", {})
         if not isinstance(columns, dict):
             raise HTTPException(422, "Mapeamento de colunas inválido")
+        # Reserve the optional membership field before the Stations profile
+        # rebuilds its fixed A–N mapping. Global imports must exclude it too.
+        note_headers = {label for label in header if is_contract_notes(label)}
+        for key, label in columns.items():
+            if is_contract_notes(key) and label:
+                if not isinstance(label, str) or label not in header:
+                    raise HTTPException(422, f"Cabeçalho de Notas inexistente: {label}")
+                note_headers.add(label)
         if standard:
             # Validate the supplied layout, including optional column headers.
             # The caller cannot bypass mandatory checks by hiding/remapping a field.
@@ -170,8 +179,6 @@ def parse(data, mapping, *, contract_notes=True):
             raise HTTPException(422, "Mapeie external_id")
         # Reserve the notes column even for a legacy custom mapping such as
         # extra.Notas. Its contents must never enter the physical station or source JSON.
-        note_headers = {label for label in header if is_contract_notes(label)}
-        note_headers.update(label for key, label in columns.items() if is_contract_notes(key) and label in header)
         note_indexes = [i for i, label in enumerate(header) if label in note_headers]
         if len(note_indexes) > 1:
             raise HTTPException(422, "Cabeçalho de Notas ambíguo")
@@ -193,6 +200,13 @@ def parse(data, mapping, *, contract_notes=True):
         records = []
         seen = set()
         errors = []
+        if contract_notes and note_index is not None:
+            # Read formula metadata alongside cached results from the same
+            # validated bytes. Never evaluate formulas or mistake a missing
+            # cached result for the administrator deliberately clearing a note.
+            formulas = openpyxl.load_workbook(BytesIO(data), read_only=True, data_only=False)
+            note_cells = formulas[sheet].iter_rows(min_row=row + 1, max_row=min(s.max_row or 100001, 100001),
+                                                   min_col=note_index + 1, max_col=note_index + 1)
         for num, values in enumerate(
             s.iter_rows(
                 min_row=row + 1,
@@ -207,8 +221,15 @@ def parse(data, mapping, *, contract_notes=True):
             # Ignore formatted but empty rows and annotations outside the data table.
             relevant = values[:14] if standard else values
             note = ""
-            if contract_notes and note_index is not None and note_index < len(values):
-                raw = values[note_index].value
+            if formulas is not None:
+                formula_cell, = next(note_cells)
+                value_cell = values[note_index] if note_index < len(values) else None
+                raw = value_cell.value if value_cell is not None else None
+                if formula_cell.data_type == "f" and (raw is None or value_cell.data_type == "e"):
+                    cell = formula_cell.coordinate
+                    errors.append({"row": num, "cell": cell, "field": "contract_notes",
+                                   "error": f"{cell}: recalcule a fórmula de Notas e guarde o Excel."})
+                    continue
                 note = normalize_contract_notes("" if raw is None else str(raw))
             if not note and not any(c.value is not None and str(c.value).strip()
                                     for i, c in enumerate(relevant) if i != note_index):
@@ -277,4 +298,6 @@ def parse(data, mapping, *, contract_notes=True):
     except (DefusedXmlException, ParseError, ValueError, TypeError) as e:
         raise HTTPException(422, "Excel inválido") from e
     finally:
+        if formulas is not None:
+            formulas.close()
         w.close()

@@ -4,11 +4,13 @@ from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 import json
 from threading import Barrier
+from xml.etree import ElementTree
+from zipfile import ZipFile
 
 import openpyxl
 import pytest
 from app.import_profiles import STATIONS_COLUMNS
-from app.importer import analyse
+from app.importer import analyse, parse
 from test_station_catalogue import second_contract, technician
 from test_stations_055 import draft
 from test_workflow import setup
@@ -130,3 +132,57 @@ def test_note_text_limits(setup, text, status):
     url = root + "/chargers/" + charger["id"] + "/notes"
     assert client.put(url, headers=admin, json={"base_revision": 0, "notes": text}).status_code == status
     assert client.get(url, headers=admin).json()["contract_notes"] == (text if status == 200 else "")
+
+
+def test_standard_profile_reserves_explicit_notes_column_and_rejects_uncalculated_formula(setup):
+    client, admin, contract, _ = setup
+    root = f"/api/contracts/{contract['id']}"
+    workbook = openpyxl.load_workbook(BytesIO(book("Usar entrada B")))
+    sheet = workbook.active
+    sheet["O1"] = "Instruções de acesso"
+    columns = {"contract_notes": "Instruções de acesso"}
+
+    def upload(*, commit):
+        data = BytesIO()
+        workbook.save(data)
+        return client.post(root + "/import", headers=admin, files={"file": ("IDs.xlsx", data.getvalue())},
+                           data={"mapping": json.dumps({"sheet": "Stations", "columns": columns}),
+                                 "commit": str(commit).lower()})
+
+    upload(commit=True).raise_for_status()
+    row, = client.get(root + "/chargers", headers=admin).json()
+    assert row["contract_notes"] == "Usar entrada B"
+    assert "Instruções de acesso" not in row["details"]["source"]
+    sheet["O2"] = '=CONCAT("Entrada", " C")'
+    preview = upload(commit=False)
+    preview.raise_for_status()
+    assert preview.json()["errors"][0]["cell"] == "O2"
+    assert upload(commit=True).status_code == 422
+    after, = client.get(root + "/chargers", headers=admin).json()
+    assert (after["notes_revision"], after["contract_notes"]) == (row["notes_revision"], row["contract_notes"])
+
+
+@pytest.mark.parametrize(("result_type", "cached", "valid"), [
+    ("str", "Entrada C", True), ("e", "#VALUE!", False),
+])
+def test_notes_formula_uses_only_valid_saved_results(result_type, cached, valid):
+    # openpyxl writes the formula but never calculates it. Add its saved Excel
+    # result in memory, preserving the formula in the same O2 worksheet cell.
+    output = BytesIO()
+    ns = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+    with ZipFile(BytesIO(book('="Entrada C"'))) as source, ZipFile(output, "w") as dest:
+        for entry in source.infolist():
+            data = source.read(entry)
+            if entry.filename == "xl/worksheets/sheet1.xml":
+                sheet = ElementTree.fromstring(data)
+                cell = sheet.find(f".//{ns}c[@r='O2']")
+                assert cell is not None and cell.find(ns + "f") is not None
+                cell.set("t", result_type)
+                cell.find(ns + "v").text = cached
+                data = ElementTree.tostring(sheet)
+            dest.writestr(entry, data)
+    result = parse(output.getvalue(), {"sheet": "Stations", "columns": {}})
+    if valid:
+        assert result["errors"] == [] and result["records"][0]["contract_notes"] == cached
+    else:
+        assert result["records"] == [] and result["errors"][0]["cell"] == "O2"
