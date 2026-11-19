@@ -116,6 +116,11 @@ in the selected contract. Reimporting a blank cell clears the notes for that ID.
 column preserves them. A standalone PCVE catalogue import ignores the column. Administrators
 can also edit notes in the app using the notes icon beside the contract card's navigation button.
 
+An explicitly mapped notes column belongs to the membership even if it has a custom header
+in the Stations template. When that column contains formulas, recalculate and save the workbook
+in Excel before importing. Preview identifies cells without a usable calculated result and the
+server blocks the import until they are corrected.
+
 Each PCVE has one `Station` record. A `Charger` UUID links that record to a contract. The contract
 import creates or updates the station and adds the link. Every linked contract reads the same
 station details. Stations remain in the catalogue when a contract is purged.

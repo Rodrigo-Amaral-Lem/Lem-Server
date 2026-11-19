@@ -11,6 +11,15 @@ def validate_extras(payload, items, photos=None):
         raise ValueError('Assinaturas inválidas')
     answers = payload.get('answers', {})
     if photos is not None:
+        # Migrated signatures belong to historical checkpoints whose IDs have
+        # changed. Their referenced PNG must still belong to this report.
+        legacy = payload.get('legacy_signatures', {})
+        png_ids = {p['id'] for p in photos if p['mime'] == 'image/png'}
+        if not isinstance(legacy, dict) or any(
+            not isinstance(entry, dict) or not isinstance(entry.get('photo_id'), str)
+            or entry['photo_id'] not in png_ids for entry in legacy.values()
+        ):
+            raise ValueError('Imagem da assinatura histórica em falta ou inválida')
         for key, item in items.items():
             if item.get('signature_required') and key not in signatures:
                 raise ValueError(key + ': falta assinatura do técnico')
