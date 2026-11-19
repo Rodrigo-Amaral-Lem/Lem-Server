@@ -21,7 +21,7 @@ from sqlalchemy import (
     inspect,
     select,
 )
-from .import_profiles import clean_station_details
+from .import_profiles import clean_station_details, is_contract_notes, normalize_contract_notes
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker, relationship
 
 
@@ -135,6 +135,7 @@ class Charger(Base):
     # Kept only to retain the exact legacy import during migration/recovery.
     legacy_details: Mapped[dict] = mapped_column("details", JSON, default=dict, deferred=True)
     station: Mapped[Station | None] = relationship(lazy="selectin")
+    contract_note: Mapped["ContractChargerNote | None"] = relationship(cascade="all, delete-orphan")
 
     @property
     def details(self):
@@ -147,6 +148,27 @@ class Charger(Base):
             self.station.updated = now()
         else:
             self.legacy_details = value
+
+
+class ContractChargerNote(Base):
+    """One instruction per contract membership. A missing row means empty revision zero."""
+    __tablename__ = "contract_charger_notes"
+    charger_id: Mapped[str] = mapped_column(ForeignKey("chargers.id", ondelete="CASCADE"), primary_key=True)
+    text: Mapped[str] = mapped_column(Text)
+    revision: Mapped[int] = mapped_column(Integer)
+
+
+def set_contract_notes(charger, value):
+    note = charger.contract_note
+    if value == (note.text if note else ""):
+        return False
+    if note is None:
+        charger.contract_note = ContractChargerNote(text=value, revision=1)
+    else:
+        # Clearing also advances the revision, protecting against stale editors.
+        note.text = value
+        note.revision += 1
+    return True
 
 
 class DetachedCharger(Base):
@@ -169,7 +191,7 @@ def clean_existing_station_data(engine):
     # for the first transaction; an interrupted cleanup is retried.
     with engine.begin() as connection:
         claimed = connection.execute(text(
-            "INSERT INTO completed_data_migrations (name) VALUES ('pcve-current-fields-v1') "
+            "INSERT INTO completed_data_migrations (name) VALUES ('pcve-contract-notes-v1') "
             "ON CONFLICT (name) DO NOTHING RETURNING name"
         )).first()
         if claimed is None:
@@ -177,6 +199,18 @@ def clean_existing_station_data(engine):
         for model in (Station, Charger):
             table = model.__table__
             for key, data in connection.execute(select(table.c.id, table.c.details)):
+                # Only a legacy membership's own import can establish a contract
+                # of origin. Never fan a shared station's raw source out to its contracts.
+                if model is Charger and data:
+                    source = data.get("source")
+                    fields = {**source, **data} if isinstance(source, dict) else data
+                    raw = next((v for k, v in fields.items() if is_contract_notes(k) and v), "")
+                    value = normalize_contract_notes(raw)
+                    if value:
+                        connection.execute(text(
+                            "INSERT INTO contract_charger_notes (charger_id, text, revision) "
+                            "VALUES (:id, :value, 1) ON CONFLICT (charger_id) DO NOTHING"
+                        ), {"id": key, "value": value})
                 clean = clean_station_details(data)
                 if data and clean != data:
                     values = {"details": clean}

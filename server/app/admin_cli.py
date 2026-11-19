@@ -22,7 +22,7 @@ from sqlalchemy import select, delete, update, func
 from sqlalchemy.exc import IntegrityError
 from .stations import lock_catalogue, get_or_create_station
 from .models import DetachedCharger, attached_charger
-from .import_profiles import clean_station_details, obsolete_station_field
+from .import_profiles import clean_station_details, is_contract_notes, obsolete_station_field
 from .models import (
     database,
     User,
@@ -520,6 +520,8 @@ def charger_commands(db, args):
         raise ValueError(
             "external_id não pertence aos detalhes; o ID do PCVE é permanente"
         )
+    if any(is_contract_notes(key) for key in details):
+        raise ValueError("Edite as notas deste ID na página de notas do contrato.")
     if any(obsolete_station_field(key) for key in details):
         raise ValueError("Campo excluído da ficha do PCVE.")
     merged = clean_station_details({**(charger.details or {}), **details})

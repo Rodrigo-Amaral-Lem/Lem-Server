@@ -192,6 +192,14 @@ and its contract memberships. Existing reports keep their recorded identity and 
 Older clients can continue to sync using the previous report format. Update clients in place
 to retain offline drafts, then sync them against the updated server. Checklist v7 remains current.
 
-The default minimum client is 0.2.6 and the latest client is 0.5.0. Compatible older clients,
+In 0.5.0 the default minimum client was 0.2.6 and the latest client was 0.5.0. Compatible older clients,
 including 0.4.1, can log in and receive an update notice. Previously issued sessions keep their
 existing expiry. Administrators can revoke sessions with the commands in the administration guide.
+
+### Upgrade to 0.5.1
+
+Update the API and its latest-client setting to 0.5.1 before updating the app in place. The
+minimum remains 0.2.6. Startup creates the contract membership notes table. If an older import
+captured **Notas** as raw metadata, startup recovers text with a recorded membership of origin
+and removes it from the live shared station fields. For text retained only in a shared PCVE
+record, reimport the source workbook into the intended contract.

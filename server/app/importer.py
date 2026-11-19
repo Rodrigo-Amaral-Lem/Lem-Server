@@ -23,6 +23,8 @@ from .import_profiles import (
     FIELDS,
     obsolete_station_field,
     clean_station_details,
+    is_contract_notes,
+    normalize_contract_notes,
     STATIONS_COLUMNS,
     STATIONS_PROFILE,
     is_stations_header,
@@ -95,7 +97,7 @@ def analyse(data):
                     "recommended_mapping": profile,
                 }
             )
-        return {"sheets": sheets, "fields": FIELDS}
+        return {"sheets": sheets, "fields": [*FIELDS, "contract_notes"]}
     except (DefusedXmlException, ParseError, ValueError, TypeError) as e:
         raise HTTPException(422, "Excel inválido") from e
     finally:
@@ -117,7 +119,7 @@ def cell_text(cell, identifier=False):
 
 
 # Resolve explicit headers, collect row/cell errors, and return records without writing the DB.
-def parse(data, mapping):
+def parse(data, mapping, *, contract_notes=True):
     w = workbook(data)
     try:
         sheet = mapping.get("sheet")
@@ -166,9 +168,21 @@ def parse(data, mapping):
 
         if not columns.get("external_id"):
             raise HTTPException(422, "Mapeie external_id")
+        # Reserve the notes column even for a legacy custom mapping such as
+        # extra.Notas. Its contents must never enter the physical station or source JSON.
+        note_headers = {label for label in header if is_contract_notes(label)}
+        note_headers.update(label for key, label in columns.items() if is_contract_notes(key) and label in header)
+        note_indexes = [i for i, label in enumerate(header) if label in note_headers]
+        if len(note_indexes) > 1:
+            raise HTTPException(422, "Cabeçalho de Notas ambíguo")
+        note_index = next(iter(note_indexes), None)
         indexes = {}
         ignored_headers = {label for key, label in columns.items() if obsolete_station_field(key) and isinstance(label, str)}
         for key, label in columns.items():
+            if is_contract_notes(key):
+                continue
+            if label and label in note_headers:
+                raise HTTPException(422, "A coluna de Notas é exclusiva do ID no contrato")
             if not label or obsolete_station_field(key) or obsolete_station_field(label):
                 continue
             if header.count(label) != 1:
@@ -192,7 +206,12 @@ def parse(data, mapping):
                 raise HTTPException(422, "Excel excede limites de linhas/células")
             # Ignore formatted but empty rows and annotations outside the data table.
             relevant = values[:14] if standard else values
-            if not any(c.value is not None and str(c.value).strip() for c in relevant):
+            note = ""
+            if contract_notes and note_index is not None and note_index < len(values):
+                raw = values[note_index].value
+                note = normalize_contract_notes("" if raw is None else str(raw))
+            if not note and not any(c.value is not None and str(c.value).strip()
+                                    for i, c in enumerate(relevant) if i != note_index):
                 continue
             rec = {
                 key: (
@@ -237,7 +256,7 @@ def parse(data, mapping):
             rec["source"] = {
                 label: cell_text(values[i]) if i < len(values) else ""
                 for i, label in enumerate(header)
-                if label and label not in ignored_headers and not obsolete_station_field(label)
+                if label and label not in ignored_headers and label not in note_headers and not obsolete_station_field(label)
             }
             rec = clean_station_details(rec)
             # Preview the same spelling that the live station will display, even
@@ -245,7 +264,10 @@ def parse(data, mapping):
             for field in ("address", "region", "manufacturer", "energy_supply"):
                 if field in indexes:
                     rec["source"][header[indexes[field]]] = rec[field]
-            records.append({"external_id": ext, "details": rec})
+            record = {"external_id": ext, "details": rec}
+            if contract_notes and note_index is not None:
+                record["contract_notes"] = note
+            records.append(record)
         return {
             "records": records,
             "errors": errors,

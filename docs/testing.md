@@ -192,3 +192,7 @@ connector rules. These checks complement rather than replace the multi-device in
 UI changes require actual Android emulator
 screenshots and touch exercises, including portrait, landscape and narrow layouts; offscreen tests
 alone do not satisfy the user's instruction. Keep per-run evidence in ongoing_work.
+
+The `test_contract_notes.py` suite covers membership-scoped Excel instructions, old sheets,
+standalone catalogue imports, assigned readers, Android administrator writes, concurrent edits,
+lost acknowledgements and detachment. It uses generated workbooks and disposable SQLite data.

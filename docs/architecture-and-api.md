@@ -78,6 +78,7 @@ are enabled only when `LEM_API_DOCS=1`.
 | PUT `/api/contracts/{cid}/users/{user_id}` | Assign access |
 | GET `/api/admin/deleted-contracts`; POST `/api/contracts/{cid}/trash`, `/restore` | Contract trash workflow |
 | GET `/api/contracts/{cid}/chargers` | Contract memberships with the current central station details and report summaries |
+| GET / PUT `/api/contracts/{cid}/chargers/{charger_id}/notes` | Read current membership notes, or save them as an administrator using `notes` and `base_revision`. Android and desktop use the same permissions. |
 | GET `/api/stations` | One record per PCVE across all active assigned contracts for technicians, or the entire catalogue for administrators |
 | GET `/api/stations/{sid}/reports` | Accessible active-contract report summaries, including history of removed memberships; correction visibility follows the report rules |
 | DELETE `/api/contracts/{cid}/chargers/{charger_id}` | Administrator removes only the contract membership. Repeated requests are idempotent; reimporting restores the membership UUID |
@@ -102,6 +103,13 @@ accepts `base_updated` and a map of changed fields. The server returns 409 when 
 has advanced the revision.
 
 Station and contract imports run the same Excel parser and merge into the same station records.
+The parser extracts **Notas** before constructing station details and raw source fields. Contract
+import stores it in `contract_charger_notes`, keyed by the membership UUID. Contract listings
+return `contract_notes` and `notes_revision`. A missing note has revision zero. A changed text,
+including clearing a note, advances its revision. An identical retry succeeds and a stale edit
+of different text returns 409. Existing reports can read notes after detachment. Editing resumes
+when the ID is added back to the contract. Permanent contract deletion cascades to its notes.
+
 Station imports can create records before assignment to a contract. Contract imports also create
 membership links. Preview is read-only. Previously verified identity fields survive workbook
 imports and can be changed explicitly through the station editor. Closing a report can update the

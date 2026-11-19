@@ -7,6 +7,7 @@
 """Versioned source layouts; required columns are enforced by the server."""
 
 import re
+import unicodedata
 
 STATIONS_PROFILE = "lem-stations-v1"
 # column, field, source header, required
@@ -44,6 +45,21 @@ FIELDS = [
 ]
 
 
+def is_contract_notes(key):
+    return str(key).removeprefix("extra.").strip().casefold() in {"notas", "contract_notes"}
+
+
+def normalize_contract_notes(value):
+    """Preserve multiline text verbatim unless the whole cell is visually empty."""
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+    if not any(c.isprintable() and not c.isspace() and unicodedata.category(c) not in {"Mn", "Me"}
+               and c not in "\u115f\u1160\u2800\u3164\uffa0" for c in text):
+        return ""
+    if "\x00" in text or len(text) > 32767:
+        raise ValueError("Notas inválidas: máximo de 32767 caracteres e sem caracteres nulos.")
+    return text
+
+
 # Older import profiles and old catalogues may contain both mapped fields
 # and arbitrary Excel headers. Keep the postal address and coordinates.
 def obsolete_station_field(key):
@@ -59,7 +75,8 @@ def obsolete_station_field(key):
 
 
 def clean_station_details(details):
-    result = {k: v for k, v in (details or {}).items() if not obsolete_station_field(k)}
+    result = {k: v for k, v in (details or {}).items()
+              if not obsolete_station_field(k) and not is_contract_notes(k)}
     # Some Portuguese workbook exports contain Ý/ý where a cedilla precedes
     # a/o/u. Identifiers, serials and technical model codes are left verbatim.
     for field in ("address", "region", "manufacturer", "energy_supply"):
@@ -69,7 +86,8 @@ def clean_station_details(details):
             result[field] = re.sub(r"([Ýý])(?=[aouãõáàâóôú])",
                                    lambda match: "Ç" if match[1] == "Ý" else "ç", value, flags=re.I)
     if isinstance(result.get("source"), dict):
-        result["source"] = {k: v for k, v in result["source"].items() if not obsolete_station_field(k)}
+        result["source"] = {k: v for k, v in result["source"].items()
+                            if not obsolete_station_field(k) and not is_contract_notes(k)}
     return result
 
 
@@ -80,10 +98,14 @@ def is_stations_header(header):
 def recommended(header, sheet, row):
     if not is_stations_header(header):
         return None
+    columns = {field: label for _, field, label, _ in STATIONS_COLUMNS}
+    for label in header:
+        if is_contract_notes(label):
+            columns["contract_notes"] = label
     return {
         "profile": STATIONS_PROFILE,
         "sheet": sheet,
         "header_row": row,
-        "columns": {field: label for _, field, label, _ in STATIONS_COLUMNS},
+        "columns": columns,
         "required_fields": [field for _, field, _, required in STATIONS_COLUMNS if required],
     }
