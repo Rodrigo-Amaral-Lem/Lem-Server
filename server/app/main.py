@@ -25,6 +25,7 @@ from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from .models import (
     database,
     User,
+    AccountAdminLock,
     SessionToken,
     Contract,
     ContractTrash,
@@ -56,6 +57,8 @@ from .exports import write_bundle, file_chunks, MissingEvidence
 from .report_naming import EVIDENCE_EXTENSIONS, content_disposition, evidence_stem, report_identifier
 from .contract_trash import RETENTION, utc_now, purge_expired
 from . import corrections
+
+SESSION_LIFETIME = timedelta(days=365)
 from .evidence_cache import EvidenceCache, EvidenceResponse
 
 TEMPLATE = json.loads(
@@ -260,7 +263,7 @@ def create_app(url=None, bootstrap=True):
     def user_dep(request: Request, auth: HTTPAuthorizationCredentials = Depends(bearer), db=Depends(db_dep)):
         db.info["client_platform"] = request.headers.get("X-Lem-Client-Platform", "")
         token = db.get(SessionToken, digest(auth.credentials))
-        if not token or token.expires < now():
+        if not token or token.expires <= now():
             raise HTTPException(401, "Sessão expirada; entre novamente")
         user = db.scalar(select(User).where(User.id == token.user_id)
                          .with_for_update(read=True).execution_options(populate_existing=True))
@@ -270,7 +273,7 @@ def create_app(url=None, bootstrap=True):
         # the token read above may already have been revoked. Recheck afterwards.
         token = db.scalar(select(SessionToken).where(SessionToken.digest == token.digest)
                           .execution_options(populate_existing=True))
-        if not token or token.expires < now():
+        if not token or token.expires <= now():
             raise HTTPException(401, "Sessão expirada; entre novamente")
         return user
 
@@ -399,23 +402,29 @@ def create_app(url=None, bootstrap=True):
 
     # Normalize identity before all rate limits and run scrypt even for absent users.
     @app.post("/api/login")
-    def login(body: Login, request: Request, db=Depends(db_dep)):
+    def login(body: Login, request: Request, response: Response, db=Depends(db_dep)):
         email = body.email.strip().lower()
         limiter.consume(request.client.host if request.client else "", email)
+        # Console revocation takes this guard exclusively. Order it before the
+        # User lock so an issued token lands wholly before or after revocation.
+        db.scalar(select(AccountAdminLock.id).where(AccountAdminLock.id == 1)
+                  .with_for_update(read=True))
         user = db.scalar(select(User).where(User.email == email).with_for_update(read=True))
         valid = verify(body.password, user.password if user else dummy_password)
         if not user or user.role not in ("admin", "tech") or not valid:
             raise HTTPException(401, "Credenciais inválidas")
         token = secrets.token_urlsafe(32)
-        db.execute(delete(SessionToken).where(SessionToken.expires < now()))
+        issued = datetime.now(timezone.utc)
+        db.execute(delete(SessionToken).where(SessionToken.expires <= issued.isoformat()))
         db.add(
             SessionToken(
                 digest=digest(token),
                 user_id=user.id,
-                expires=(datetime.now(timezone.utc) + timedelta(days=30)).isoformat(),
+                expires=(issued + SESSION_LIFETIME).isoformat(),
             )
         )
         db.commit()
+        response.headers["Cache-Control"] = "no-store"
         return {
             "token": token,
             "user": {"id": user.id, "name": user.name, "email": user.email, "role": user.role},

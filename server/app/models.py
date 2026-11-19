@@ -33,9 +33,10 @@ class Base(DeclarativeBase):
 
 
 class AccountAdminLock(Base):
-    """Singleton serializes console credential/role writes and last-admin checks.
+    """Singleton serializes console account changes, revocation and last-admin checks.
 
-    API readers lock only their User rows, allowing unrelated normal work.
+    Login shares this lock when issuing a token. Authenticated requests lock
+    only their User rows, allowing unrelated normal work.
     """
 
     __tablename__ = "account_admin_lock"

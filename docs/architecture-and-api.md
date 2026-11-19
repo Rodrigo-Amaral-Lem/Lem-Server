@@ -44,6 +44,11 @@ require `Authorization: Bearer <token>`. Client versions outside the configured 
 inclusive interval**, including missing/malformed/newer versions, receive 426. A token alone does
 not establish protocol compatibility.
 
+New logins receive a bearer token with a fixed 365-day lifetime from issuance in UTC. The server
+checks its expiry on every authenticated request and returns 401 for expired or revoked tokens.
+Existing tokens retain their original expiry. The [administration console](administration.md)
+can revoke one account's sessions or all sessions, including sessions saved by client apps.
+
 Administrators manage contracts, assignments and ownership. Technicians operate within assigned
 contracts and edit their own drafts. A technician cannot delete another owner's work or a closed
 report. Administrators have wider deletion/ownership actions, but database revision and context

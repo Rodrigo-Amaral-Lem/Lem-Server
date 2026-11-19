@@ -199,6 +199,20 @@ def user_commands(db, args):
         if args.show_password and args.generate:
             result["new_password"] = password  # One newly generated password only.
         return result
+    if action == "revoke-sessions":
+        statement = delete(SessionToken)
+        if args.all:
+            account_write_guard(db)
+            target = "all"
+        else:
+            user = account(db, args.user, lock="write")
+            statement = statement.where(SessionToken.user_id == user.id)
+            target = user.id
+        # Delete and audit in the same transaction. The login guard prevents
+        # concurrent issuance from escaping a revocation already in progress.
+        count = db.execute(statement).rowcount
+        audit(db, "sessions.revoke", target)
+        return dict(target=target, sessions_revoked=count)
     user = account(db, args.user)
     if action in ("assign", "unassign"):
         user = account(db, user.id, lock="read")
@@ -593,6 +607,10 @@ def parser():
     edit.add_argument("--role", choices=ACTIVE)
     password = users.add_parser("password")
     password.add_argument("user")
+    revoke = users.add_parser("revoke-sessions", help="Obrigar a iniciar sessão novamente")
+    scope = revoke.add_mutually_exclusive_group(required=True)
+    scope.add_argument("user", nargs="?", help="ID ou email")
+    scope.add_argument("--all", action="store_true", help="Todas as contas")
     for command in [create, password]:
         command.add_argument("--generate", action="store_true")
         command.add_argument(
@@ -647,6 +665,7 @@ users list | users show EMAIL | users create --email EMAIL --name "Nome" --role 
 users update EMAIL --name "Nome" --email NOVO_EMAIL --role tech
 users assign EMAIL CONTRACT_ID | users unassign EMAIL CONTRACT_ID
 users password EMAIL [--generate --show-password] | users password-hash EMAIL | users delete EMAIL
+users revoke-sessions EMAIL_OR_ID | users revoke-sessions --all
 contracts list [--deleted] | contracts trash ID | contracts restore ID | contracts purge ID
 reports list [--contract ID] [--unowned] | reports show ID
 reports owner REPORT_ID EMAIL [--assign-access] | reports delete ID
