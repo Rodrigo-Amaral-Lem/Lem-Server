@@ -2,11 +2,11 @@
 # Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
 
 """Public report identifiers; internal UUIDs remain stable for synchronization."""
-from datetime import datetime
 import re
 import unicodedata
 from urllib.parse import quote
-from zoneinfo import ZoneInfo
+
+EVIDENCE_EXTENSIONS = {"image/jpeg": "jpg", "image/png": "png", "video/mp4": "mp4", "video/3gpp": "3gp"}
 
 
 def component(value, fallback, maximum):
@@ -21,24 +21,19 @@ def report_identifier(report):
     snapshot = report.get("snapshot") or {}
     charger = component((snapshot.get("charger") or {}).get("external_id"), "Carregador", 72)
     contract = component((snapshot.get("contract") or {}).get("name"), "Contrato", 112)
-    if report.get("status") != "closed":
-        return f"{charger}_Rascunho_{contract}"
-    stamp = "sem-data_sem-hora"
-    for value in (report.get("finished"), (report.get("payload") or {}).get("finished")):
-        if not value:
-            continue
-        try:
-            date = datetime.fromisoformat(value.replace("Z", "+00:00"))
-            if date.tzinfo is None:
-                continue
-            stamp = date.astimezone(ZoneInfo("Europe/Lisbon")).strftime("%Y-%m-%d_%H-%M-%S")
-            break
-        except (ValueError, TypeError, AttributeError):
-            continue
-    return f"{charger}_{stamp}_{contract}"
+    return f"{charger}_{contract}"
 
 
-def content_disposition(identifier, extension):
+def evidence_stem(identifier, evidence_id, extension):
+    # Keep the full stable evidence ID and respect the same byte limit as App.
+    suffix = f"_{evidence_id}"
+    limit = max(1, 250 - len(f"{suffix}.{extension}".encode("utf-8")))
+    return component(identifier, "Report", limit) + suffix
+
+
+def content_disposition(identifier, extension, *, inline=False):
     filename = identifier + "." + extension
-    fallback = unicodedata.normalize("NFKD", filename).encode("ascii", "ignore").decode("ascii")
-    return f'attachment; filename="{fallback}"; filename*=UTF-8\'\'{quote(filename, safe="")}'
+    ascii_identifier = unicodedata.normalize("NFKD", identifier).encode("ascii", "ignore").decode("ascii")
+    fallback = component(ascii_identifier, "Report", 249 - len(extension)) + "." + extension
+    disposition = "inline" if inline else "attachment"
+    return f'{disposition}; filename="{fallback}"; filename*=UTF-8\'\'{quote(filename, safe="")}'

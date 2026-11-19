@@ -302,10 +302,10 @@
         },
         {
           "id": "EST.15",
-          "label": "Verifique se o terminal de pagamento (POS) está instalado e em boas condições",
+          "label": "Verifique se o terminal de pagamento (TPM) está instalado e em boas condições",
           "kind": "status",
           "photo_required": false,
-          "na_notes_default": "Sem POS",
+          "na_notes_default": "Sem TPM",
           "na_notes_required": true
         },
         {

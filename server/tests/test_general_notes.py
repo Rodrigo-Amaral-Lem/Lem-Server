@@ -50,12 +50,12 @@ def test_general_notes_media_and_export(setup,key):
     # including optional notes fields, with its exact bytes and checkpoint path.
     with ZipFile(BytesIO(archive.content)) as zipped:
         assert zipped.testzip() is None
-        manifest = json.loads(zipped.read('report.json'))
+        manifest = json.loads(zipped.read(next(name for name in zipped.namelist() if name.endswith(".json"))))
         media = [p for p in manifest['photos'] if p['checkpoint'] == key]
         assert len(media) == 2
         for p in media:
             folder, ext = ('videos', 'mp4') if p['mime'].startswith('video/') else ('fotografias', 'png')
-            original = zipped.read(f"{folder}/{key}/{p['id']}.{ext}")
+            original = zipped.read(f"{folder}/{key}/{manifest['identifier']}_{p['id']}.{ext}")
             assert hashlib.sha256(original).hexdigest() == p['digest']
 
 
@@ -69,14 +69,16 @@ def test_general_notes_zip_keeps_media_without_any_observation_text(setup, empty
         for video in (False, True):
             pid = photo(c, h, rid, key, video=video)
             folder, ext = ('videos', 'mp4') if video else ('fotografias', 'png')
-            expected[f'{folder}/{key}/{pid}.{ext}'] = c.get(
+            expected[folder, key, pid, ext] = c.get(
                 f'/api/reports/{rid}/photos/{pid}', headers=h).content
     saved = c.put('/api/reports/' + rid, headers=h, json=body)
     assert saved.status_code == 200, saved.text
     archive = c.get('/api/reports/' + rid + '/bundle', headers=h)
     assert archive.status_code == 200, archive.text
     with ZipFile(BytesIO(archive.content)) as zipped:
-        for filename, original in expected.items():
+        identifier = saved.json()["identifier"]
+        for (folder, key, pid, ext), original in expected.items():
+            filename = f"{folder}/{key}/{identifier}_{pid}.{ext}"
             assert zipped.read(filename) == original
 
 def test_general_notes_can_be_omitted(setup):
@@ -148,13 +150,15 @@ def test_corrected_old_est18_media_survives_pdf_zip_and_another_correction(setup
         archive = c.get('/api/reports/' + rid + '/bundle', headers=headers)
         assert archive.status_code == 200, archive.text
         with ZipFile(BytesIO(archive.content)) as zipped:
-            manifest = json.loads(zipped.read('report.json'))
+            manifest = json.loads(zipped.read(next(name for name in zipped.namelist() if name.endswith(".json"))))
             assert_notes_photo_in_pdf(zipped.read(manifest['identifier'] + '.pdf'))
             for mime, data in originals.items():
                 digest = hashlib.sha256(data).hexdigest()
                 media = next(p for p in manifest['photos'] if p['digest'] == digest)
                 folder, ext = ('videos', 'mp4') if mime.startswith('video/') else ('fotografias', 'png')
-                assert zipped.read(f"{folder}/{media['checkpoint']}/{media['id']}.{ext}") == data
+                assert zipped.read(
+                    f"{folder}/{media['checkpoint']}/{manifest['identifier']}_{media['id']}.{ext}"
+                ) == data
 
 
 def test_site_notes_added_once_to_existing_draft_only():

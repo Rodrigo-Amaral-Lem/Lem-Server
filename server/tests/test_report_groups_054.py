@@ -93,7 +93,7 @@ def test_signature_requires_its_own_png_at_close_and_survives_exports(setup):
     data=c.get('/api/reports/'+rid+'/bundle',headers=h)
     assert data.status_code==200
     with ZipFile(BytesIO(data.content)) as z:
-        assert z.read(f'fotografias/FIN.02/{pid}.png')==png
+        assert z.read(f'fotografias/FIN.02/{closed.json()["identifier"]}_{pid}.png')==png
 
 
 def test_gallery_image_at_different_checkpoint_does_not_satisfy_signature(setup):

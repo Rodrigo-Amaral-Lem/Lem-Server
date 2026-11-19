@@ -89,12 +89,19 @@ function renderReport(report, styles, host) {
         if (origin) text((section.id === "MAN" ? "Medições copiadas de " : "QVE copiado de ") + str(origin.source_station_id) + " · " + host.date(origin.copied_at || ""));
         (section.items || []).forEach(function(item) {
             var id = item.id, answer = answers[id] || {}, raw = str(answer.value), label = connectorText(item.label);
+            var notes = str(answer.notes);
+            // Present the new spelling in older reports while retaining custom
+            // observations and the stored historical answers as entered.
+            if (id === "EST.15") {
+                label = label.replace("(POS)", "(TPM)");
+                if (notes === "Sem POS" && answer.suggested_notes === notes) notes = "Sem TPM";
+            }
             if (/^(MAN\.0[4-6]|PC02\.0[5-7])$/.test(id)) label = label.replace("380-420 V", "360-440 V");
             if (/^(MAN\.0[7-9]|PC02\.(08|09|10))$/.test(id)) label = label.replace("200-250 V", "207-253 V");
             room(52); text(id + " · " + label, 10, true);
             if (item.kind === "notes") {
                 if (raw.trim()) text(raw);
-                else if (!str(answer.notes).trim()) text("Sem observações");
+                else if (!notes.trim()) text("Sem observações");
             } else {
                 // Old frozen current readings may be unitless; never relabel them as mA.
                 var measurementId = Number(report.template.version) < 7 && /^(MAN\.11|MAN\.12)$/.test(id) ? "legacy-" + id : id;
@@ -102,7 +109,7 @@ function renderReport(report, styles, host) {
                 text("Resposta: " + ((formatted === null ? raw : formatted) || "Por preencher") + (nok ? " · NOK — fora dos limites" : ""), 9, nok, nok ? "#a12626" : ink);
             }
             if (answer.assessment) text("Avaliação: " + answer.assessment);
-            if (str(answer.notes).trim()) text("Observações: " + answer.notes);
+            if (notes.trim()) text("Observações: " + notes);
             var signature = (payload.signatures || {})[id];
             if (signature) text("Assinatura de " + str(signature.signed_by) + " · " + host.date(signature.signed_at || ""), 9);
             (report.photos || []).filter(function(photo) { return photo.checkpoint === id; }).forEach(function(photo) {

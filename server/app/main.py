@@ -53,7 +53,7 @@ from .measurements import digits as measurement_digits, format_value, not_applic
 from .maintenance_rules import apply_assessments, reading as maintenance_reading
 from .maintenance_migration import upgrade_checkpoint, persist_upgrade
 from .exports import write_bundle, file_chunks, MissingEvidence
-from .report_naming import report_identifier, content_disposition
+from .report_naming import EVIDENCE_EXTENSIONS, content_disposition, evidence_stem, report_identifier
 from .contract_trash import RETENTION, utc_now, purge_expired
 from . import corrections
 from .evidence_cache import EvidenceCache, EvidenceResponse
@@ -368,8 +368,7 @@ def create_app(url=None, bootstrap=True):
             "id": r.id,
             "contract_id": contract_id,
             "presentation": contract_presentation(db, contract_id),
-            "identifier": report_identifier({"snapshot": r.snapshot, "status": r.status, "finished": r.finished,
-                                              "payload": r.payload}),
+            "identifier": report_identifier({"snapshot": r.snapshot}),
             "charger_id": r.charger_id,
             "owner_id": r.owner_id if owner and owner.role in ("admin", "tech") else "",
             "technician": technician.name if technician and technician.role in ("admin", "tech") else "Sem proprietário",
@@ -620,7 +619,7 @@ def create_app(url=None, bootstrap=True):
         summaries = {}
         rows = db.execute(
             select(Report.charger_id, Report.id, Report.status, Report.owner_id, Report.updated, Report.revision,
-                   Report.finished, ReportCorrection.state.label("correction_state"),
+                   Report.started, Report.finished, ReportCorrection.state.label("correction_state"),
                    ReportCorrection.editor_id.label("correction_editor"),
                    Report.snapshot["charger"]["external_id"].as_string().label("report_charger"),
                    Report.snapshot["contract"]["name"].as_string().label("report_contract"))
@@ -636,12 +635,14 @@ def create_app(url=None, bootstrap=True):
             summaries.setdefault(row.charger_id, []).append(
                 {
                     "id": row.id,
-                    "identifier": report_identifier({"status": row.status, "finished": row.finished,
+                    "identifier": report_identifier({
                         "snapshot": {"charger": {"external_id": row.report_charger},
                                      "contract": {"name": row.report_contract}}}),
                     "status": row.status,
                     "owner_id": row.owner_id,
                     "updated": row.updated,
+                    "started": row.started,
+                    "finished": row.finished,
                     "revision": row.revision,
                 }
             )
@@ -1322,7 +1323,7 @@ def create_app(url=None, bootstrap=True):
     def get_photo(rid: str, pid: str, request: Request, _slot=Depends(download_admission), u=Depends(user_dep), db=Depends(db_dep)):
         from .downloads import byte_range
         try:
-            report_access(db, u, rid)
+            report = report_access(db, u, rid)
             p = db.execute(select(Photo.mime, Photo.digest, func.length(Photo.data).label("size"))
                 .where(Photo.id == pid, Photo.report_id == rid)).first()
             if not p:
@@ -1330,6 +1331,10 @@ def create_app(url=None, bootstrap=True):
             etag = '"' + p.digest + '"'
             span = byte_range(request.headers.get("range"), p.size, request.headers.get("if-range"), etag)
             headers = {"Accept-Ranges": "bytes", "ETag": etag, "Cache-Control": "private, no-transform"}
+            if extension := EVIDENCE_EXTENSIONS.get(p.mime):
+                identifier = report_identifier({"snapshot": report.snapshot})
+                headers["Content-Disposition"] = content_disposition(
+                    evidence_stem(identifier, pid, extension), extension, inline=True)
             start, end = 0, p.size - 1
             if span:
                 start, end = span
@@ -1412,10 +1417,11 @@ def create_app(url=None, bootstrap=True):
                 return self.source_path.read_bytes()
             return self._db.scalar(select(Photo.data).where(Photo.id == self.id))
 
-        def detach(self):
-            # Materialize one BLOB at a time while the source is still locked.
-            # Retain only paths/metadata during the potentially slow PDF worker.
-            self.source_path
+        def detach(self, *, stage_original):
+            # A PDF lists videos by metadata. Only stage their bytes for ZIP.
+            # Materialize required originals while the source is still locked.
+            if stage_original:
+                self.source_path
             self._db = None
 
     def export_photos(db, rid, cache=None):
@@ -1428,14 +1434,14 @@ def create_app(url=None, bootstrap=True):
             )
         ]
 
-    def export_snapshot(db, user, rid, cache):
+    def export_snapshot(db, user, rid, cache, *, include_video_bytes):
         """Freeze one consistent export, then release DB locks before rendering."""
         try:
             report = closed_export_report(db, user, rid)
             document = report_json(db, report)
             photos = export_photos(db, rid, cache)
             for photo in photos:
-                photo.detach()
+                photo.detach(stage_original=include_video_bytes or not photo.mime.startswith("video/"))
             return document, photos
         finally:
             # Corrections, branding changes and account operations must not wait
@@ -1449,7 +1455,7 @@ def create_app(url=None, bootstrap=True):
 
         try:
             with TemporaryDirectory(prefix="lem-pdf-") as cache:
-                doc, photos = export_snapshot(db, u, rid, cache)
+                doc, photos = export_snapshot(db, u, rid, cache, include_video_bytes=False)
                 document = build_pdf(doc, photos)
         except MissingEvidence as error:
             raise HTTPException(409, str(error))
@@ -1471,7 +1477,7 @@ def create_app(url=None, bootstrap=True):
             # Fetch each original from the DB once; the PDF worker and ZIP reuse
             # the detached snapshot even if a correction replaces the source.
             with TemporaryDirectory(prefix="lem-bundle-") as cache:
-                doc, photos = export_snapshot(db, u, rid, cache)
+                doc, photos = export_snapshot(db, u, rid, cache, include_video_bytes=True)
                 size = write_bundle(spool, doc, photos, build_pdf(doc, photos))
         except MissingEvidence as error:
             spool.close()

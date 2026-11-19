@@ -67,7 +67,7 @@ def test_admin_exports_legacy_technician_report_with_current_contract_brand(setu
         bundle = c.get(f'/api/reports/{rid}/bundle', headers=admin)
         assert direct.status_code == bundle.status_code == 200
         with ZipFile(BytesIO(bundle.content)) as archive:
-            saved = json.loads(archive.read('report.json'))
+            saved = json.loads(archive.read(next(name for name in archive.namelist() if name.endswith(".json"))))
             assert saved['presentation']['issuer'] == issuer
             bundled_pdf = archive.read(saved['identifier'] + '.pdf')
             for data in (direct.content, bundled_pdf):
@@ -171,7 +171,7 @@ def test_lem_to_csmtec_changes_existing_and_new_exports(setup):
         response=c.get(f'/api/reports/{report_id}/bundle',headers=h)
         assert response.status_code==200,response.text[:100]
         with ZipFile(BytesIO(response.content)) as archive:
-            report=json.loads(archive.read('report.json'))
+            report=json.loads(archive.read(next(name for name in archive.namelist() if name.endswith(".json"))))
             assert report['presentation']['issuer']=='CSMTEC'
             reader=PdfReader(BytesIO(archive.read(report['identifier']+'.pdf')))
             assert 'CSMTEC' in reader.pages[0].extract_text()

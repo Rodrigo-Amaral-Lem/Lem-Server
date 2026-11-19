@@ -24,6 +24,12 @@ def build_pdf(r, photos):
         root = Path(directory)
         report = dict(r, identifier=report_identifier(r), photos=[])
         for index, photo in enumerate(photos):
+            item = {"id": getattr(photo, "id", ""), "checkpoint": photo.checkpoint,
+                    "mime": getattr(photo, "mime", "image/jpeg")}
+            report["photos"].append(item)
+            # The shared renderer lists videos by checkpoint without reading them.
+            if item["mime"].startswith("video/"):
+                continue
             path = getattr(photo, "source_path", None)
             if path is None:
                 data = photo.data  # Propagate DB failures; never mask them as image errors.
@@ -32,8 +38,7 @@ def build_pdf(r, photos):
                 path = root / f"evidence-{index}"
                 path.write_bytes(data)
                 del data
-            report["photos"].append({"id": getattr(photo, "id", ""), "checkpoint": photo.checkpoint,
-                "mime": getattr(photo, "mime", "image/jpeg"), "path": path.as_uri()})
+            item["path"] = path.as_uri()
         manifest, output = root / "report.json", root / "report.pdf"
         manifest.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
         env = dict(os.environ, QT_QPA_PLATFORM="offscreen", QT_QUICK_BACKEND="software", PYTHONUTF8="1")

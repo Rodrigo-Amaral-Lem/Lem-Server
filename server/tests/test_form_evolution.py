@@ -162,7 +162,7 @@ def test_maximum_legacy_notes_survive_merge_save_reload_and_export(setup, tmp_pa
     export = c.get(path+'/bundle', headers=h)
     assert export.status_code == 200, export.text[:100]
     with ZipFile(BytesIO(export.content)) as archive:
-        document = json.loads(archive.read('report.json'))
+        document = json.loads(archive.read(next(name for name in archive.namelist() if name.endswith(".json"))))
         assert document['payload']['answers']['FIN.03']['notes'] == final_text
         assert document['payload']['answers']['EST.18']['notes'] == equipment_text
         assert document['payload']['answers']['MAN.22']['notes'] == maintenance_text

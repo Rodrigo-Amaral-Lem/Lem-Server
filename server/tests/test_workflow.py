@@ -203,7 +203,7 @@ def test_reports_photos_pdf_zip_permissions_conflict(setup, tmp_path):
     zipbytes = c.get("/api/reports/" + rid + "/bundle", headers=t).content
     with ZipFile(BytesIO(zipbytes)) as z:
         assert z.read(closed.json()["identifier"] + ".pdf").startswith(b"%PDF")
-        assert z.read(f"fotografias/EST.01/{pid}.jpg") == data
+        assert z.read(f"fotografias/EST.01/{closed.json()['identifier']}_{pid}.jpg") == data
     with app.state.factory() as db:
         assert db.get(Photo, pid).data == data
     # Keep a demonstration PDF from the same tested renderer.
@@ -390,7 +390,8 @@ def test_remove_draft_photo_permissions_revision_retry_and_required_evidence(set
     with ZipFile(BytesIO(c.get("/api/reports/" + rid + "/bundle", headers=h).content)) as z:
         assert not any(n.startswith("fotografias/EST.01/") for n in z.namelist())
         signature_id = body["payload"]["signatures"]["FIN.02"]["photo_id"]
-        assert f"fotografias/FIN.02/{signature_id}.png" in z.namelist()
+        pdf = next(name for name in z.namelist() if name.endswith(".pdf"))
+        assert f"fotografias/FIN.02/{pdf.removesuffix('.pdf')}_{signature_id}.png" in z.namelist()
     assert (
         c.delete(url + "?base_revision=3", headers=h).status_code == 409
     ), "Even retry must not edit a closed report"

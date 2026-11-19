@@ -30,7 +30,8 @@ def upgrade_template(template):
             if key in LABELS:
                 item["label"] = LABELS[key]
             if key == "EST.15":
-                item.update(na_notes_default="Sem POS", na_notes_required=True)
+                item.update(label=item["label"].replace("(POS)", "(TPM)"),
+                            na_notes_default="Sem TPM", na_notes_required=True)
             if key in ("MAN.11", "MAN.12"):
                 item.update(measurement_unit="mA", measurement_digits=6, measurement_decimals=0, help=CURRENT_HELP)
             if key == "MAN.18":

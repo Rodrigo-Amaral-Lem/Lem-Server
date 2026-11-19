@@ -71,7 +71,8 @@ def test_template_migration_is_idempotent_and_closed_history_frozen():
     assert "EST.10" not in items
     assert items["MAN.21"]["photo_required"] and items["MAN.21"]["kind"] == "status"
     assert items["MAN.22"]["kind"] == "notes"
-    assert items["EST.15"]["na_notes_default"] == "Sem POS"
+    assert items["EST.15"]["na_notes_default"] == "Sem TPM"
+    assert "(TPM)" in items["EST.15"]["label"]
     assert corrected_draft_template(new, "draft") == new
     assert corrected_draft_template(old, "closed") == old == LEGACY_TEMPLATE
 

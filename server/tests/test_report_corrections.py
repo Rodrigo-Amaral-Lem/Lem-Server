@@ -51,8 +51,8 @@ def test_atomic_replacement_preserves_evidence_owner_and_retry(correction_case,p
     assert result.status_code == 200, result.text
     saved = result.json()
     assert saved['owner_id'] == original['owner_id'] and saved['status']=='closed'
-    assert saved['identifier'] != original['identifier']
-    assert '2026-10-01_11-30-12' in saved['identifier']
+    assert saved['id'] != original['id'] and saved['identifier'] == original['identifier']
+    assert saved['payload']['finished'] == data['payload']['finished']
     assert c.post(url,headers=h,json=data).json() == saved  # Lost response is safe.
     altered = deepcopy(data); altered['payload']['answers']['FIN.03']['notes']='different'
     assert c.post(url,headers=h,json=altered).status_code == 409

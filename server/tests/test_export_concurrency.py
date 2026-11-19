@@ -88,14 +88,15 @@ def check_export(response, kind, report, others):
         assert int(response.headers["content-length"]) == len(response.content)
         with ZipFile(BytesIO(response.content)) as archive:
             assert archive.testzip() is None
-            document = json.loads(archive.read("report.json"))
+            document = json.loads(archive.read(next(name for name in archive.namelist() if name.endswith(".json"))))
             assert document["id"] == report["id"]
             assert document["owner_id"] == report["document"]["owner_id"]
             assert document["revision"] == report["document"]["revision"]
-            original = archive.read(f'fotografias/EST.01/{report["photo"]}.png')
+            identifier = document["identifier"]
+            original = archive.read(f'fotografias/EST.01/{identifier}_{report["photo"]}.png')
             assert original == report["original"]
             for photo in document["photos"]:
-                data = archive.read(f'fotografias/{photo["checkpoint"]}/{photo["id"]}.png')
+                data = archive.read(f'fotografias/{photo["checkpoint"]}/{identifier}_{photo["id"]}.png')
                 assert sha256(data).hexdigest() == photo["digest"]
             pdf = archive.read(document["identifier"] + ".pdf")
     else:

@@ -212,12 +212,13 @@ def test_slow_export_render_does_not_block_correction(correction_case, monkeypat
                     from hashlib import sha256
                     with ZipFile(BytesIO(exported.content)) as archive:
                         assert archive.testzip() is None
-                        document = json.loads(archive.read('report.json'))
+                        document = json.loads(archive.read(next(name for name in archive.namelist() if name.endswith(".json"))))
                         assert document['id'] == original['id']
                         assert document['payload'] == original['payload']
                         assert document['presentation'] == original['presentation']
                         for photo in document['photos']:
-                            member = next(name for name in archive.namelist() if '/'+photo['id']+'.' in name)
+                            member = next(name for name in archive.namelist()
+                                          if f'/{document["identifier"]}_{photo["id"]}.' in name)
                             assert sha256(archive.read(member)).hexdigest() == photo['digest']
 
 

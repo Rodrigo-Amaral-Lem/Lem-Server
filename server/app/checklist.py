@@ -152,6 +152,10 @@ def corrected_draft_template(template, status, *, upgrade=True):
     for section in result["sections"]:
         for item in section["items"]:
             item.update(current_rules.get(item["id"], {}))
+            if item["id"] == "EST.15" and result["version"] == 7:
+                item["label"] = item["label"].replace("(POS)", "(TPM)")
+                if item.get("na_notes_default") == "Sem POS":
+                    item["na_notes_default"] = "Sem TPM"
             # Apply to editable v6 drafts only; closed history keeps its saved rules.
             if "MAN.14" <= item["id"] <= "MAN.18":
                 item.update(photo_required=True, photo_always=False, na_notes_required=True)

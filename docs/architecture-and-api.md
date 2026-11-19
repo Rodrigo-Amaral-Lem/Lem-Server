@@ -121,10 +121,11 @@ administrator access and the contract write lock. Stale `base_revision` returns 
 the contract read lock on PostgreSQL only while staging their snapshot. Atomic revision updates and a single joined
 presentation read also prevent lost edits or mixed issuer/client logos on SQLite.
 Required files must exist;
-missing evidence is reported rather than silently omitted. PDF is returned as bytes; ZIP output uses
-a spooled file. Both exports copy metadata and originals into private temporary storage under
-the source locks, then release the DB session **before** the PDF worker and ZIP assembly.
-Each original is read from the database once; PDF and archive output reuse the staged file.
+missing evidence is reported rather than silently omitted. Both exports stage their metadata
+and required originals under the source locks, then release the DB session before rendering
+the PDF or assembling the ZIP. The PDF is returned as bytes and the ZIP streams from a spool.
+The PDF renders staged photographs and lists videos from their metadata. A ZIP stages
+each original once, reuses the staged photographs for its PDF and includes the original videos.
 An accepted export can therefore finish with its original content/presentation even if an
 administrator commits a correction or changes branding during rendering. A detached export never
 reopens the database to recover a missing temporary file: it fails and the user can retry.
@@ -165,10 +166,13 @@ closure/import. Reversing that order creates a PostgreSQL deadlock when both ope
 Every cloned signature reference, including `legacy_signatures` on a repeated correction, follows
 the new evidence IDs; it must not refer to the source deleted after a successful replacement.
 
-Report responses and catalogue summaries expose a public `identifier` derived from frozen context
-and completion time. Download headers use that name for both PDF and ZIP, with UTF-8 filename
-support; the ZIP contains the equally named PDF plus `report.json` and originals. UUIDs remain the
-API/storage keys. See [naming rules](../../Common/docs/report-contract.md#public-report-identifiers-and-export-names).
+Report responses and catalogue summaries expose a public `identifier` in the format
+`ID_Contrato`, derived from the charger and contract snapshot. Catalogue summaries supply
+start and finish separately. PDF and ZIP download headers use the identifier with UTF-8
+filename support. The archive contains the equally named PDF and JSON and groups original
+media by checkpoint. Media filenames share the identifier and add the evidence UUID.
+UUIDs address reports and evidence in the API and storage.
+[Naming rules](../../Common/docs/report-contract.md#public-report-identifiers-and-export-names)
 
 The lifespan task checks expired contract trash roughly every minute. Export/media limits and retry
 semantics are documented in [security](../../Common/docs/security.md); operator procedures are in

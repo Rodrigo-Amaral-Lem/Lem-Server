@@ -6,6 +6,8 @@ from app.main import TEMPLATE
 from io import BytesIO
 from types import SimpleNamespace
 from zipfile import ZipFile
+from pypdf import PdfReader
+from sqlalchemy import event
 import shutil
 import subprocess
 import uuid
@@ -43,7 +45,7 @@ def test_video_export_keeps_original(video):
     target = BytesIO()
     write_bundle(target, {}, [photo], pdf)
     with ZipFile(target) as z:
-        assert z.read("videos/EST.01/clip.mp4") == video
+        assert z.read("videos/EST.01/Carregador_Contrato_clip.mp4") == video
 
 
 def test_video_upload_retry_delete_and_required_photo(setup, video):
@@ -84,11 +86,27 @@ def test_video_upload_retry_delete_and_required_photo(setup, video):
     closed = c.put(f'/api/reports/{rid}', headers=h,
                    json={"checklist_version": TEMPLATE["version"], "charger_id":chargers[0]["id"],"base_revision":revision,"status":"closed","payload":payload})
     assert closed.status_code == 200, closed.text
-    assert c.get(f'/api/reports/{rid}/pdf',headers=h).content.startswith(b'%PDF')
-    bundle = c.get(f'/api/reports/{rid}/bundle',headers=h)
+    video_reads = []
+    engine = app.state.factory.kw["bind"]
+
+    def record_video_reads(_connection, _cursor, statement, parameters, _context, _executemany):
+        if "SELECT photos.data" in statement and pid in parameters:
+            video_reads.append(pid)
+
+    event.listen(engine, "before_cursor_execute", record_video_reads)
+    try:
+        pdf = c.get(f'/api/reports/{rid}/pdf', headers=h)
+        assert pdf.status_code == 200, pdf.text
+        text = "\n".join(page.extract_text() for page in PdfReader(BytesIO(pdf.content)).pages)
+        assert "Vídeo (ficheiro incluído na exportação ZIP)" in text
+        assert not video_reads
+        bundle = c.get(f'/api/reports/{rid}/bundle', headers=h)
+        assert video_reads == [pid]
+    finally:
+        event.remove(engine, "before_cursor_execute", record_video_reads)
     assert bundle.status_code == 200, bundle.text
     with ZipFile(BytesIO(bundle.content)) as z:
-        assert z.read(f'videos/EST.01/{pid}.mp4') == video
+        assert z.read(f'videos/EST.01/{report["identifier"]}_{pid}.mp4') == video
     assert c.delete(path,headers=h,params={"base_revision":closed.json()["revision"]}).status_code == 409
 
 @pytest.mark.parametrize('duration,accepted', [(60, True), (120, True), (120.5, True), (120.501, False), (0, False)])

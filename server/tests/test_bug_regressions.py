@@ -212,17 +212,17 @@ def test_bundle_is_written_one_photo_at_a_time_and_streamed():
     assert spool.closed and len(data) == size and loads == ["a", "b"]
     with ZipFile(BytesIO(data)) as z:
         assert sorted(z.namelist()) == sorted([
-            "fotografias/EST.01/a.jpg",
-            "fotografias/EST.01/b.png",
-            "report.json",
-            "Carregador_Rascunho_Contrato.pdf",
+            "fotografias/EST.01/Carregador_Contrato_a.jpg",
+            "fotografias/EST.01/Carregador_Contrato_b.png",
+            "Carregador_Contrato.json",
+            "Carregador_Contrato.pdf",
         ])
         assert (
-            z.read("fotografias/EST.01/a.jpg") == jpeg
-            and z.read("fotografias/EST.01/b.png") == png
+            z.read("fotografias/EST.01/Carregador_Contrato_a.jpg") == jpeg
+            and z.read("fotografias/EST.01/Carregador_Contrato_b.png") == png
         )
-        assert z.read("Carregador_Rascunho_Contrato.pdf") == b"%PDF-test"
-        assert json.loads(z.read("report.json")) == {"id": "r", "nome": "ação"}
+        assert z.read("Carregador_Contrato.pdf") == b"%PDF-test"
+        assert json.loads(z.read("Carregador_Contrato.json")) == {"id": "r", "nome": "ação"}
         assert z.testzip() is None
 
 
@@ -264,17 +264,20 @@ def test_closed_report_exports_with_bounded_photo_loading(setup):
         "status": "draft",
         "payload": {"answers": answers()},
     }
-    assert client.put(f"/api/reports/{rid}", headers=headers, json=body).status_code == 200
+    draft = client.put(f"/api/reports/{rid}", headers=headers, json=body)
+    assert draft.status_code == 200
+    identifier = draft.json()["identifier"]
     required = [i["id"] for s in TEMPLATE["sections"] for i in s["items"] if i["photo_required"]]
     originals = {}
     for checkpoint in required:
         pid = str(uuid.uuid4())
-        originals[f"fotografias/{checkpoint}/{pid}.jpg"] = _jpeg((320, 240))
+        name = f"fotografias/{checkpoint}/{identifier}_{pid}.jpg"
+        originals[name] = _jpeg((320, 240))
         response = client.put(
             f"/api/reports/{rid}/photos/{pid}",
             headers=headers,
             data={"checkpoint": checkpoint, "base_revision": "1"},
-            files={"file": ("foto.jpg", originals[f"fotografias/{checkpoint}/{pid}.jpg"])},
+            files={"file": ("foto.jpg", originals[name])},
         )
         assert response.status_code == 200, response.text
     from test_workflow import add_signature
