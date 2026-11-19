@@ -7,7 +7,7 @@ from datetime import datetime
 import re
 from sqlalchemy import select, update
 from .checklist import connector_names, connector_text
-from .import_profiles import FIELDS, clean_station_details, obsolete_station_field
+from .import_profiles import FIELDS, clean_station_details, is_contract_notes, obsolete_station_field
 from .models import Station, StationCatalogueLock, Charger, now
 from .measurements import not_applicable
 import uuid
@@ -60,7 +60,7 @@ def edit_station(station, base_updated, edits, actor_id):
     details = station.details or {}
     changes = {}
     for field, raw in edits.items():
-        if obsolete_station_field(field):
+        if obsolete_station_field(field) or is_contract_notes(field):
             if not raw.strip():
                 continue  # Older clients may submit empty legacy fields.
             raise ValueError("Este campo não faz parte da ficha do PCVE.")

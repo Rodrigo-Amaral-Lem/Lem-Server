@@ -34,6 +34,7 @@ from .models import (
     ContractTrash,
     Assignment,
     Charger,
+    set_contract_notes,
     DetachedCharger,
     attached_charger,
     Station,
@@ -52,6 +53,7 @@ from .request_limits import RequestBodyLimit
 from .compatibility import ClientPolicy, VERSION
 from .branding import selection, contract_logos, contract_presentation, save_presentation, ISSUERS
 from .importer import analyse, parse
+from .import_profiles import normalize_contract_notes
 from .images import InvalidImage
 from .media import inspect_evidence
 from .checklist import for_charger, corrected_draft_template, corrected_draft_payload, connector_names
@@ -102,6 +104,12 @@ class StationEdit(BaseModel):
     model_config = ConfigDict(extra="forbid")
     base_updated: str = Field(min_length=1, max_length=50)
     fields: dict[str, str] = Field(min_length=1, max_length=256)
+
+
+class ContractNotesEdit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    base_revision: int = Field(ge=0, strict=True)
+    notes: str = Field(max_length=32767)
 
 
 class NewContract(BaseModel):
@@ -701,14 +709,58 @@ def create_app(url=None, bootstrap=True):
                 "station_updated": c.station.updated if c.station is not None else None,
                 "external_id": c.external_id,
                 "details": c.details,
+                **note_fields(c),
                 "reports": summaries.get(c.id, []),
                 "deleted_reports": removed.get(c.id, []),
                 "report_replacements": {rid: replacements[rid] for rid in removed.get(c.id, []) if rid in replacements},
             }
             for c in db.scalars(
-                select(Charger).options(joinedload(Charger.station)).where(Charger.contract_id == cid, attached_charger()).order_by(Charger.external_id)
+                select(Charger).options(joinedload(Charger.station), joinedload(Charger.contract_note))
+                .where(Charger.contract_id == cid, attached_charger()).order_by(Charger.external_id)
             )
         ]
+
+    def note_fields(charger):
+        note = charger.contract_note
+        return {"contract_notes": note.text if note else "", "notes_revision": note.revision if note else 0}
+
+    def membership_notes(db, cid, charger_id):
+        charger = db.get(Charger, charger_id)
+        if charger is None or charger.contract_id != cid:
+            raise HTTPException(404, "PCVE inexistente neste contrato")
+        attached = db.get(DetachedCharger, charger_id) is None
+        return charger, attached
+
+    def notes_response(charger, attached):
+        return {"id": charger.id, "contract_id": charger.contract_id, "external_id": charger.external_id,
+                "attached": attached, **note_fields(charger)}
+
+    @app.get("/api/contracts/{cid}/chargers/{charger_id}/notes")
+    def read_notes(cid: str, charger_id: str, u=Depends(user_dep), db=Depends(db_dep)):
+        accessible(db, u, cid)
+        return notes_response(*membership_notes(db, cid, charger_id))
+
+    @app.put("/api/contracts/{cid}/chargers/{charger_id}/notes")
+    def save_notes(cid: str, charger_id: str, body: ContractNotesEdit, u=Depends(admin), db=Depends(db_dep)):
+        accessible(db, u, cid, write=True)
+        # Imports and detach use this same lock, including on SQLite.
+        lock_catalogue(db)
+        charger, attached = membership_notes(db, cid, charger_id)
+        if not attached:
+            raise HTTPException(409, "Este ID foi retirado do contrato")
+        try:
+            value = normalize_contract_notes(body.notes)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        current = note_fields(charger)
+        if current["contract_notes"] != value:
+            if current["notes_revision"] != body.base_revision:
+                raise HTTPException(409, "As notas foram alteradas. Consulte a versão atual antes de guardar.")
+            set_contract_notes(charger, value)
+            audit(db, u, "contract.notes", charger_id)
+        result = notes_response(charger, attached)
+        db.commit()
+        return result
 
     def visible_stations(u):
         query = select(Station).order_by(Station.external_id)
@@ -830,7 +882,7 @@ def create_app(url=None, bootstrap=True):
     def import_stations(file: UploadFile = File(), mapping: str = Form(), commit: bool = Form(False),
                         u=Depends(station_admin), db=Depends(db_dep)):
         data = file_bytes(file)
-        result = parse(data, import_mapping(mapping))
+        result = parse(data, import_mapping(mapping), contract_notes=False)
         if not commit:
             return import_preview(result)
         records = import_records(result)
@@ -882,7 +934,8 @@ def create_app(url=None, bootstrap=True):
         created = changed = 0
         lock_catalogue(db)
         existing = {
-            c.external_id: c for c in db.scalars(select(Charger).where(Charger.contract_id == cid))
+            c.external_id: c for c in db.scalars(select(Charger).options(joinedload(Charger.contract_note))
+                                                  .where(Charger.contract_id == cid))
         }
         stations = stations_for_import(db, records)
         for rec in records:
@@ -897,6 +950,8 @@ def create_app(url=None, bootstrap=True):
                 db.add(c)
                 existing[c.external_id] = c
                 created += 1
+            if "contract_notes" in rec:
+                set_contract_notes(c, rec["contract_notes"])
         # Companies can span several contracts. A per-contract lock cannot
         # protect their shared profile key: use one atomic upsert instead of
         # SELECT-then-INSERT. The last committed mapping remains the default.

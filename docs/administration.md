@@ -104,6 +104,11 @@ structure, required cells, duplicates, coordinate/scalar forms and connector con
 committing. Reusing a verified station must not let a stale workbook overwrite fields already
 confirmed by a technician.
 
+The optional **Notas** column (O in the supplied workbook) contains instructions for that ID
+in the selected contract. Reimporting a blank cell clears the notes for that ID. Omitting the
+column preserves them. A standalone PCVE catalogue import ignores the column. Administrators
+can also edit notes in the app using the notes icon beside the contract card's navigation button.
+
 Each PCVE has one `Station` record. A `Charger` UUID links that record to a contract. The contract
 import creates or updates the station and adds the link. Every linked contract reads the same
 station details. Stations remain in the catalogue when a contract is purged.

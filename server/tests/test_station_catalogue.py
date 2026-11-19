@@ -265,9 +265,9 @@ def test_import_and_upgrade_clean_live_fields_and_preserve_snapshots(setup):
         station = db.get(Station, link["station_id"])
         bad = {"location": "Local excluído", "site_id": "OUTRO", "address": "CALIÝOS", "latitude": "37.0",
                "source": {"Localização / nome do local": "Local excluído", "Modelo": "Leia"}}
-        station.details = dict(bad)
-        db.get(Charger, link["id"]).legacy_details = dict(bad)
-        db.delete(db.get(DataMigration, "pcve-current-fields-v1"))
+        station.details = {**bad, "source": {**bad["source"], "Notas": "Origem desconhecida"}}
+        db.get(Charger, link["id"]).legacy_details = {**bad, "extra.Notas": "Apenas deste contrato"}
+        db.delete(db.get(DataMigration, "pcve-contract-notes-v1"))
         engine = db.get_bind()
         db.commit()
     for attempt in range(2):
@@ -276,4 +276,6 @@ def test_import_and_upgrade_clean_live_fields_and_preserve_snapshots(setup):
         clean = db.get(Station, link["station_id"]).details
         assert clean == {"address": "CALIÇOS", "latitude": "37.0", "source": {"Modelo": "Leia"}}
         assert db.get(Charger, link["id"]).legacy_details == clean
+        assert db.get(Charger, link["id"]).contract_note.text == "Apenas deste contrato"
+        assert db.get(Charger, link["id"]).contract_note.revision == 1
         assert db.get(Report, rid).snapshot == before["snapshot"]
