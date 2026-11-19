@@ -5,6 +5,7 @@
 # Host administration wrapper: manage-server.sh help, or no arguments for the interactive console.
 # Requires Docker access and this installation's deploy/.env; forwards arguments inside the API container.
 # Commands can mutate accounts, access, ownership and data. See docs/administration.md.
+# To require a fresh login, use users revoke-sessions EMAIL_OR_ID or users revoke-sessions --all.
 
 # Run on the server from an installed LEM checkout. No database port is exposed.
 set -euo pipefail

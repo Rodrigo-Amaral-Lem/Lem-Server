@@ -47,6 +47,7 @@ Do not use the bootstrap module merely to change an existing account.
 | `users update EMAIL_OR_ID --name "Name" --email NEW_EMAIL --role tech` | Change selected account properties |
 | `users assign EMAIL_OR_ID CONTRACT_ID`, `users unassign EMAIL_OR_ID CONTRACT_ID` | Manage contract access |
 | `users password EMAIL_OR_ID` | Prompt for a replacement password and revoke sessions |
+| `users revoke-sessions EMAIL_OR_ID`, `users revoke-sessions --all` | Require a fresh login for one account or every account |
 | `users password-hash EMAIL_OR_ID` | Show the stored one-way hash, not the original password |
 | `users delete EMAIL_OR_ID` | Remove login identity while retaining required historical references |
 | `contracts list [--deleted]`, `contracts trash ID`, `contracts restore ID`, `contracts purge ID` | Inspect, retain, restore or permanently purge a contract |
@@ -61,6 +62,18 @@ Account creation supports `--if-missing`. Creation/password commands accept `--g
 generated credentials requires `--show-password`. Account/role changes protect the last active
 administrator. Destructive commands have confirmation prompts; `APAGAR` is not a preview mode. Do
 not automate a confirmation merely to make an operation unattended.
+
+To require a fresh login from the installed server, run one of these commands:
+
+```bash
+bash deploy/manage-server.sh users revoke-sessions tecnico@example.test
+bash deploy/manage-server.sh users revoke-sessions --all
+```
+
+Use the user's email or UUID for one account. An explicit `--all` also revokes administrators'
+sessions. The command reports the number of deleted session records and records a
+`console.sessions.revoke` audit entry. Devices are asked to sign in on their next authenticated
+request. Users can enter with their existing password and keep their reports and assignments.
 
 [server/manage.py](../server/manage.py) is a smaller local bootstrap/recovery CLI:
 
