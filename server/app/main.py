@@ -19,7 +19,9 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Request, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.responses import Response, StreamingResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 from sqlalchemy import select, update, delete, func
 from sqlalchemy.exc import IntegrityError
@@ -96,6 +98,13 @@ class NewUser(Login):
 class ResetTechnicianPassword(BaseModel):
     # Do not echo a password in a length-validation response or model repr.
     password: SecretStr
+
+
+class OwnPasswordChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    current_password: SecretStr
+    new_password: SecretStr
+    confirmation: SecretStr
 
 
 class StationEdit(BaseModel):
@@ -229,6 +238,14 @@ def create_app(url=None, bootstrap=True):
         openapi_url="/openapi.json" if api_docs else None,
     )
     app.state.client_policy = policy
+    # Missing/ill-typed fields can make Pydantic include the original input in
+    # its errors. A credential form must never send that input back to a client.
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request, exc):
+        if request.url.path == "/api/account/password":
+            return JSONResponse({"detail": "Campos de password inválidos"}, status_code=422)
+        return await request_validation_exception_handler(request, exc)
+
     app.state.factory = Factory
     evidence_cache = EvidenceCache()
     app.state.evidence_cache = evidence_cache
@@ -236,6 +253,7 @@ def create_app(url=None, bootstrap=True):
     bearer = HTTPBearer()
     app.add_middleware(RequestBodyLimit)
     limiter = LoginLimiter()
+    password_change_limiter = LoginLimiter()
     # Use the same scrypt work for unknown users, avoiding the cheap early exit.
     dummy_password = hash_password(secrets.token_urlsafe(32))
 
@@ -277,14 +295,24 @@ def create_app(url=None, bootstrap=True):
         with Factory() as db:
             yield db
 
-    # Resolve only the digest of a bearer token; raw session tokens are not stored in the DB.
-    def user_dep(request: Request, auth: HTTPAuthorizationCredentials = Depends(bearer), db=Depends(db_dep)):
+    def begin_credential_write(db):
+        # SQLite ignores FOR UPDATE. Take its writer reservation before a login
+        # or password change reads the hash and decides which sessions may live.
+        if db.get_bind().dialect.name == "sqlite":
+            db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+
+    def authenticated_user(request, auth, db, *, changing_password=False):
+        if changing_password:
+            begin_credential_write(db)
         db.info["client_platform"] = request.headers.get("X-Lem-Client-Platform", "")
         token = db.get(SessionToken, digest(auth.credentials))
         if not token or token.expires <= now():
             raise HTTPException(401, "Sessão expirada; entre novamente")
-        user = db.scalar(select(User).where(User.id == token.user_id)
-                         .with_for_update(read=True).execution_options(populate_existing=True))
+        # Take the required lock immediately. Two simultaneous changes must
+        # never both hold a shared lock and then wait for each other to upgrade.
+        lookup = select(User).where(User.id == token.user_id)
+        lookup = lookup.with_for_update(key_share=True) if changing_password else lookup.with_for_update(read=True)
+        user = db.scalar(lookup.execution_options(populate_existing=True))
         if not user or user.role not in ("admin", "tech"):
             raise HTTPException(401, "Utilizador inexistente")
         # If a credential change won while this request waited for the User lock,
@@ -294,6 +322,9 @@ def create_app(url=None, bootstrap=True):
         if not token or token.expires <= now():
             raise HTTPException(401, "Sessão expirada; entre novamente")
         return user
+
+    def user_dep(request: Request, auth: HTTPAuthorizationCredentials = Depends(bearer), db=Depends(db_dep)):
+        return authenticated_user(request, auth, db)
 
     # Administrative access is not an implicit right to edit another owner's draft.
     def admin(user=Depends(user_dep)):
@@ -430,6 +461,7 @@ def create_app(url=None, bootstrap=True):
     def login(body: Login, request: Request, response: Response, db=Depends(db_dep)):
         email = body.email.strip().lower()
         limiter.consume(request.client.host if request.client else "", email)
+        begin_credential_write(db)
         # Console revocation takes this guard exclusively. Order it before the
         # User lock so an issued token lands wholly before or after revocation.
         db.scalar(select(AccountAdminLock.id).where(AccountAdminLock.id == 1)
@@ -464,6 +496,27 @@ def create_app(url=None, bootstrap=True):
         db.execute(delete(SessionToken).where(SessionToken.digest == digest(auth.credentials)))
         db.commit()
         return {"ok": True}
+
+    @app.put("/api/account/password")
+    def change_own_password(body: OwnPasswordChange, request: Request,
+                            auth: HTTPAuthorizationCredentials = Depends(bearer), db=Depends(db_dep)):
+        user = authenticated_user(request, auth, db, changing_password=True)
+        current = body.current_password.get_secret_value()
+        new = body.new_password.get_secret_value()
+        if not 1 <= len(current) <= 200 or not 12 <= len(new) <= 200:
+            raise HTTPException(422, "Verifique o comprimento das passwords")
+        if new != body.confirmation.get_secret_value():
+            raise HTTPException(422, "As passwords não coincidem")
+        password_change_limiter.consume(request.client.host if request.client else "", user.email)
+        if not verify(current, user.password):
+            # A wrong current password does not invalidate an authenticated session.
+            raise HTTPException(403, "Password atual incorreta")
+        user.password = hash_password(new)
+        db.execute(delete(SessionToken).where(SessionToken.user_id == user.id,
+                                              SessionToken.digest != digest(auth.credentials)))
+        audit(db, user, "user.password.change", user.id)
+        db.commit()
+        return {"ok": True, "user_id": user.id}
 
     @app.get("/api/template")
     def template(u=Depends(user_dep)):

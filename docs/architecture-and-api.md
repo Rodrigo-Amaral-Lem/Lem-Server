@@ -70,6 +70,7 @@ are enabled only when `LEM_API_DOCS=1`.
 | POST `/api/login`, `/api/logout` | Start/revoke a session |
 | GET `/api/template` | Initial shared checklist |
 | GET/POST `/api/users` | Administrator account listing/creation |
+| PUT `/api/account/password` | Authenticated technician or administrator changes their own password with `current_password`, `new_password` and `confirmation`. Keeps the calling session and revokes the account’s other sessions. |
 | PUT `/api/users/{user_id}/password` | Administrator resets a technician's password and revokes all their sessions |
 | GET/POST `/api/contracts` | Visible contracts / administrator creation |
 | PUT `/api/contracts/{cid}/presentation` | Administrator issuer/client-logo update with `base_revision` |

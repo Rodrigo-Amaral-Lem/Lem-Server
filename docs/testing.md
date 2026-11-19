@@ -35,6 +35,8 @@ configuring any custom OS temporary paths.
 
 `test_sessions.py` checks the fixed server expiry, continued compatibility with existing tokens
 and console revocation. Its PostgreSQL case exercises a login in progress during bulk revocation.
+`test_own_password.py` checks both account roles, validation, rate limits and session revocation.
+Its simultaneous-change case runs with SQLite and with the optional PostgreSQL fixture.
 
 `test_release_alignment.py` inspects the sibling App repository, or `LEM_APP_REPO` if set to another
 client repository root. It explicitly skips that cross-repository check when the client is
