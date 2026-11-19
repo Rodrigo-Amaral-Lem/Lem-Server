@@ -4,7 +4,10 @@
 """Independent station identity, contract membership, and verified field updates."""
 from copy import deepcopy
 from datetime import datetime
+import re
 from sqlalchemy import select, update
+from .checklist import connector_names, connector_text
+from .import_profiles import FIELDS
 from .models import Station, StationCatalogueLock, Charger, now
 from .measurements import not_applicable
 import uuid
@@ -16,15 +19,78 @@ class StationConflict(ValueError):
     pass
 
 
+EDITABLE_FIELDS = (set(FIELDS) - {"external_id"}) | {"power_unit"}
+
+
 def lock_catalogue(db):
-    db.scalar(select(StationCatalogueLock).where(StationCatalogueLock.id == 1).with_for_update())
+    # PostgreSQL locks the singleton row. SQLite ignores FOR UPDATE, so acquire
+    # its writer lock before reading the IDs/revisions that control the mutation.
+    lock = StationCatalogueLock
+    if db.get_bind().dialect.name == "sqlite":
+        db.execute(update(lock).where(lock.id == 1).values(id=lock.id))
+    else:
+        db.scalar(select(lock).where(lock.id == 1).with_for_update())
+
+
+def station_record(station):
+    return {"id": station.id, "external_id": station.external_id,
+            "details": station.details or {}, "updated": station.updated}
+
+
+def stations_for_import(db, records):
+    ids = [record["external_id"] for record in records]
+    stations = {}
+    for offset in range(0, len(ids), 500):
+        rows = db.scalars(select(Station).where(Station.external_id.in_(ids[offset:offset + 500])))
+        stations.update((row.external_id, row) for row in rows)
+    return stations
 
 
 def merge_import(station, incoming):
     # Once confirmed by a technician, a stale workbook must not undo the correction.
     verified = station.verified_fields or {}
-    station.details = {**(station.details or {}), **{k:v for k,v in incoming.items() if k not in verified}}
+    details = station.details or {}
+    merged = {**details, **{key: value for key, value in incoming.items() if key not in verified}}
+    if merged != details:
+        station.details = merged
+        station.updated = now()
+
+
+def edit_station(station, base_updated, edits, actor_id):
+    details = station.details or {}
+    changes = {}
+    for field, raw in edits.items():
+        if field not in EDITABLE_FIELDS and not (field.startswith("extra.") and field in details):
+            raise ValueError("Campo da estação inválido: " + field[:100])
+        value = raw.strip()
+        if len(value) > 32767:
+            raise ValueError("O valor excede o limite de uma célula Excel: " + field)
+        if field in ("latitude", "longitude") and value:
+            number = value.replace(",", ".")
+            limit = 90 if field == "latitude" else 180
+            if not re.fullmatch(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)", number) or abs(float(number)) > limit:
+                raise ValueError("Coordenada inválida: " + field)
+        if field == "connectors":
+            value = connector_text(value)
+            connector_names(value)
+        if details.get(field) != value:
+            changes[field] = value
+    if not changes:
+        # A retry after a lost acknowledgement is harmless when all fields
+        # already match the requested edit.
+        return False
+    if base_updated != station.updated:
+        raise StationConflict("A ficha mudou no servidor. Atualize os IDs e volte a abrir a edição.")
+    station.details = {**details, **changes}
     station.updated = now()
+    # Keep the protection of previously verified identity fields. Record the
+    # administrator as the source of any replacement for a verified value.
+    verified = station.verified_fields or {}
+    station.verified_fields = {**verified, **{
+        field: {"user_id": actor_id, "updated": station.updated, "source": "admin"}
+        for field in changes if field in verified
+    }}
+    return True
 
 
 def get_or_create_station(db, external_id, details, existing=None):
@@ -104,5 +170,6 @@ def rename_station(db, charger, external_id):
     if duplicate is not None and duplicate.id != charger.station_id:
         raise ValueError('Já existe outro carregador com esse ID')
     charger.station.external_id = external_id
+    charger.station.updated = now()
     db.execute(update(Charger).where(Charger.station_id == charger.station_id).values(external_id=external_id))
     charger.external_id = external_id

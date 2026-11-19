@@ -3,7 +3,10 @@
 
 from .report_extras import validate_extras
 from sqlalchemy.orm import joinedload
-from .stations import lock_catalogue, get_or_create_station, close_identity, StationConflict
+from .stations import (
+    close_identity, edit_station, get_or_create_station, lock_catalogue,
+    station_record, stations_for_import, StationConflict,
+)
 # FastAPI composition root: dependencies, authorization and transactional endpoints.
 # All handlers are registered inside create_app so tests can supply an isolated DB.
 # Read docs/architecture-and-api.md alongside this file; models.py owns the schema.
@@ -17,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Request, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 from sqlalchemy import select, update, delete, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -88,6 +91,12 @@ class NewUser(Login):
 class ResetTechnicianPassword(BaseModel):
     # Do not echo a password in a length-validation response or model repr.
     password: SecretStr
+
+
+class StationEdit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    base_updated: str = Field(min_length=1, max_length=50)
+    fields: dict[str, str] = Field(min_length=1, max_length=256)
 
 
 class NewContract(BaseModel):
@@ -280,6 +289,11 @@ def create_app(url=None, bootstrap=True):
             raise HTTPException(403, "Apenas administrador")
         return user
 
+    def station_admin(user=Depends(admin), db=Depends(db_dep)):
+        if db.info.get("client_platform") not in ("windows", "linux", "macos"):
+            raise HTTPException(403, "A gestão dos IDs de PCVEs exige a app desktop")
+        return user
+
     # Contract scope is checked independently from report ownership. Administrators see all contracts.
     def accessible(db, user, contract_id, write=False):
         c = db.scalar(select(Contract).where(Contract.id == contract_id).with_for_update(read=not write))
@@ -362,7 +376,8 @@ def create_app(url=None, bootstrap=True):
         # Return current station data on both commit and GET recovery after a lost
         # acknowledgement. Historical snapshots must never revert a newer model.
         station_update = ({"station_update": {"station_id": charger.station_id,
-                           "external_id": charger.external_id, "details": charger.details}}
+                           "external_id": charger.external_id, "details": charger.details,
+                           "updated": charger.station.updated if charger.station is not None else None}}
                           if correction and correction.state == "committed" else {})
         return {
             "id": r.id,
@@ -664,6 +679,7 @@ def create_app(url=None, bootstrap=True):
                 "id": c.id,
                 "contract_id": cid,
                 "station_id": c.station_id,
+                "station_updated": c.station.updated if c.station is not None else None,
                 "external_id": c.external_id,
                 "details": c.details,
                 "reports": summaries.get(c.id, []),
@@ -674,6 +690,38 @@ def create_app(url=None, bootstrap=True):
                 select(Charger).options(joinedload(Charger.station)).where(Charger.contract_id == cid).order_by(Charger.external_id)
             )
         ]
+
+    @app.get("/api/stations")
+    def station_catalogue(u=Depends(user_dep), db=Depends(db_dep)):
+        query = select(Station).order_by(Station.external_id)
+        if u.role != "admin":
+            # EXISTS gives one row per physical station even when multiple
+            # active, assigned contracts include that station.
+            assigned = (select(Charger.id)
+                        .join(Assignment, Assignment.contract_id == Charger.contract_id)
+                        .where(Charger.station_id == Station.id, Assignment.user_id == u.id,
+                               ~select(ContractTrash.contract_id)
+                               .where(ContractTrash.contract_id == Charger.contract_id).exists())
+                        .exists())
+            query = query.where(assigned)
+        return [station_record(station) for station in db.scalars(query)]
+
+    @app.patch("/api/stations/{sid}")
+    def save_station(sid: str, body: StationEdit, u=Depends(station_admin), db=Depends(db_dep)):
+        lock_catalogue(db)
+        station = db.get(Station, sid)
+        if station is None:
+            raise HTTPException(404, "ID de PCVE inexistente")
+        try:
+            if edit_station(station, body.base_updated, body.fields, u.id):
+                audit(db, u, "stations.edit", sid)
+        except StationConflict as error:
+            raise HTTPException(409, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        result = station_record(station)
+        db.commit()
+        return result
 
     @app.get("/api/companies/{company}/import-profile")
     def profile(company: str, u=Depends(admin), db=Depends(db_dep)):
@@ -693,8 +741,48 @@ def create_app(url=None, bootstrap=True):
     def import_analyse(file: UploadFile = File(), u=Depends(admin)):
         return analyse(file_bytes(file))
 
-    # Preview and commit run the same parser. Reject the entire import on validation errors;
-    # within a contract, update existing Station IDs and insert previously unseen ones.
+    def import_mapping(raw):
+        try:
+            config = json.loads(raw)
+        except ValueError:
+            raise HTTPException(422, "Mapeamento JSON inválido") from None
+        if not isinstance(config, dict):
+            raise HTTPException(422, "Mapeamento deve ser objeto")
+        return config
+
+    def import_preview(result):
+        return {"count": result["count"], "errors": result["errors"],
+                "sample": result["records"][:10], "records": result["records"],
+                "profile": result.get("profile")}
+
+    def import_records(result):
+        if result["errors"]:
+            raise HTTPException(422, {
+                "message": "Importação bloqueada; corrija os IDs", "errors": result["errors"],
+            })
+        return result["records"]
+
+    @app.post("/api/stations/import")
+    def import_stations(file: UploadFile = File(), mapping: str = Form(), commit: bool = Form(False),
+                        u=Depends(station_admin), db=Depends(db_dep)):
+        data = file_bytes(file)
+        result = parse(data, import_mapping(mapping))
+        if not commit:
+            return import_preview(result)
+        records = import_records(result)
+        if not records:
+            raise HTTPException(422, "O Excel não contém IDs de PCVEs")
+        lock_catalogue(db)
+        existing = stations_for_import(db, records)
+        updated = len(existing)
+        for record in records:
+            get_or_create_station(db, record["external_id"], record["details"], existing)
+        audit(db, u, "stations.import", hashlib.sha256(data).hexdigest())
+        db.commit()
+        return {"created": len(records) - updated, "updated": updated}
+
+    # A contract import writes canonical station data and its memberships in
+    # one transaction. Its counters still refer to memberships for older apps.
     @app.post("/api/contracts/{cid}/import")
     def import_file(
         cid: str,
@@ -704,12 +792,7 @@ def create_app(url=None, bootstrap=True):
         u=Depends(admin),
         db=Depends(db_dep),
     ):
-        try:
-            config = json.loads(mapping)
-        except ValueError:
-            raise HTTPException(422, "Mapeamento JSON inválido")
-        if not isinstance(config, dict):
-            raise HTTPException(422, "Mapeamento deve ser objeto")
+        config = import_mapping(mapping)
         logos = selection(config["report_logos"]) if "report_logos" in config else None
         issuer = config.get("report_issuer")
         if issuer is not None and issuer not in ISSUERS:
@@ -725,17 +808,8 @@ def create_app(url=None, bootstrap=True):
         # shared lock). Only the database commit phase serializes writers.
         contract = accessible(db, u, cid, write=commit)
         if not commit:
-            return {
-                "count": result["count"],
-                "errors": result["errors"],
-                "sample": result["records"][:10],
-                "records": result["records"],
-                "profile": result.get("profile"),
-            }
-        if result["errors"]:
-            raise HTTPException(
-                422, {"message": "Importação bloqueada; corrija os IDs", "errors": result["errors"]}
-            )
+            return import_preview(result)
+        records = import_records(result)
         if logos is not None or issuer is not None:
             current_style = contract_presentation(db, cid)
             save_presentation(db, cid, issuer or current_style["issuer"],
@@ -746,13 +820,8 @@ def create_app(url=None, bootstrap=True):
         existing = {
             c.external_id: c for c in db.scalars(select(Charger).where(Charger.contract_id == cid))
         }
-        stations = {c.station.external_id:c.station for c in existing.values() if c.station is not None}
-        station_ids = [r["external_id"] for r in result["records"] if r["external_id"] not in stations]
-        for offset in range(0, len(station_ids), 500):
-            stations.update({s.external_id:s for s in db.scalars(
-                select(Station).where(Station.external_id.in_(station_ids[offset:offset + 500]))
-            )})
-        for rec in result["records"]:
+        stations = stations_for_import(db, records)
+        for rec in records:
             station = get_or_create_station(db, rec["external_id"], rec["details"], stations)
             c = existing.get(rec["external_id"])
             if c:
@@ -1036,7 +1105,8 @@ def create_app(url=None, bootstrap=True):
         out = report_json(db, db.get(Report, rid))
         if body.status == "closed":
             out["station_update"] = {"station_id": charger.station_id, "external_id": charger.external_id,
-                                     "details": charger.details}
+                                     "details": charger.details,
+                                     "updated": charger.station.updated if charger.station is not None else None}
         return out
 
     @app.post("/api/reports/{rid}/corrections")

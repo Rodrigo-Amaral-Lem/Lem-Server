@@ -91,10 +91,18 @@ structure, required cells, duplicates, coordinate/scalar forms and connector con
 committing. Reusing a verified station must not let a stale workbook overwrite fields already
 confirmed by a technician.
 
-Physical `Station` identity is shared across contracts; a `Charger` UUID is the contract membership.
+Each PCVE has one `Station` record. A `Charger` UUID links that record to a contract. The contract
+import creates or updates the station and adds the link. Every linked contract reads the same
+station details. Stations remain in the catalogue when a contract is purged.
+
+Desktop administrators can import a workbook directly from **IDs de PCVEs** and edit an existing
+station from its record. A direct import updates the catalogue independently of contract membership.
+The desktop accepts the Stations template or a first-row header with ID or Identificador. The editor
+checks the station revision before saving and records the administrator action in the audit log.
+
 Closing a report can confirm manufacturer, model and serial via EST.02–EST.04. Concurrent
-inconsistent corrections return a conflict. Historical snapshots are preserved. Rename through the
-console's `--external-id`, not a shadow `external_id` inside `details`.
+inconsistent corrections return a conflict. Historical snapshots are preserved. Use the console's
+`--external-id` option to rename a station.
 
 ## Ownership, trash and deletion
 

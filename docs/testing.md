@@ -27,7 +27,7 @@ configuring any custom OS temporary paths.
 | Area | Examples |
 | --- | --- |
 | Reports and ownership | Revision conflicts, lost retries, owner changes, deletion, closed-history protection |
-| Contract/catalogue | Assignments, trash/retention, import batches, physical station corrections and rollback |
+| Contract/catalogue | Assignments, trash/retention, import batches, shared station revisions, desktop administration and rollback |
 | Checklist | Manual readings/assessments, optional notes, actual photograph requirements and connector expansion |
 | Media/export | Image/video admission, duplicate evidence IDs, signatures, PDF text/layout signals and ZIP originals |
 | Access/security | Authentication, compatibility interval, request limits, permissions and resource admission |
