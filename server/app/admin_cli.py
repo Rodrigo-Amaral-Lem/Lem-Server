@@ -575,7 +575,7 @@ def charger_commands(db, args):
     shared = Path(__file__).resolve().parents[2] / "shared/checklist-v1.json"
     if not shared.exists():
         shared = Path(__file__).resolve().parents[2].parent / "shared/checklist-v1.json"
-    for_charger(json.loads(shared.read_text()), merged)
+    for_charger(json.loads(shared.read_text(encoding="utf-8")), merged)
     lock_catalogue(db)
     charger.details = merged
     audit(db, "charger." + args.action, charger.id)

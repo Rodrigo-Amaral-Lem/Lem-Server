@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Part of LEM. See the accompanying LICENSE for license terms and warranty disclaimer.
 
+from app import main
 from app.main import TEMPLATE
 """Re-imports and unique-key races across separate administrative operations."""
 
 import uuid
+from hashlib import sha256
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.models import Charger, Contract, ImportProfile, Photo, Report, Assignment
@@ -136,30 +138,22 @@ def test_photo_id_claimed_in_another_report_returns_conflict(setup, monkeypatch)
         ).status_code
         == 200
     )
-    original = Session.commit
+    inspect = main.inspect_evidence
     raced = []
     new_pid = str(uuid.uuid4())
 
-    def commit(db):
-        pending = next((x for x in db.new if isinstance(x, Photo) and x.id == new_pid), None)
-        if pending and not raced:
+    def claim_during_inspection(content):
+        if not raced:
+            # A separate worker can commit while this worker inspects the file.
+            # Once either owns the catalogue lock the other has to wait.
             raced.append(True)
-            with app.state.factory() as other:
-                other.add(
-                    Photo(
-                        id=new_pid,
-                        report_id=other_id,
-                        checkpoint="EST.01",
-                        filename="other.png",
-                        mime="image/png",
-                        digest=pending.digest,
-                        data=pending.data,
-                    )
-                )
-                original(other)
-        return original(db)
+            with app.state.factory.begin() as other:
+                other.add(Photo(id=new_pid, report_id=other_id, checkpoint="EST.01",
+                                filename="other.png", mime="image/png",
+                                digest=sha256(content).hexdigest(), data=content))
+        return inspect(content)
 
-    monkeypatch.setattr(Session, "commit", commit)
+    monkeypatch.setattr(main, "inspect_evidence", claim_during_inspection)
     result = c.put(
         f"/api/reports/{rid}/photos/{new_pid}",
         headers=h,

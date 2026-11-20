@@ -7,6 +7,7 @@ from app.main import TEMPLATE
 import json
 import uuid
 from datetime import timedelta
+from pathlib import Path
 import pytest
 from sqlalchemy import select
 from app import admin_cli as cli
@@ -180,6 +181,15 @@ def test_contract_force_purge_only_target_and_all_confirmation_paths(setup, monk
 
 
 def test_charger_add_patch_and_technician_report_assignment(setup, monkeypatch):
+    # Exercise the Windows console default even when pytest itself uses UTF-8.
+    read_text = Path.read_text
+
+    def read_in_console_locale(path, encoding=None, errors=None, **options):
+        if path.name == "checklist-v1.json" and encoding is None:
+            encoding = "cp1252"
+        return read_text(path, encoding=encoding, errors=errors, **options)
+
+    monkeypatch.setattr(Path, "read_text", read_in_console_locale)
     c, h, contract, app = setup
     cid = contract["id"]
     added = command(
@@ -191,7 +201,7 @@ def test_charger_add_patch_and_technician_report_assignment(setup, monkeypatch):
             "--external-id",
             "NEW-001",
             "--set",
-            "model=Test",
+            "model=Estação Âncora / North",
             "--set",
             "serial=001",
             "--set",
@@ -208,6 +218,7 @@ def test_charger_add_patch_and_technician_report_assignment(setup, monkeypatch):
         == 200
     )
     before = c.get(f"/api/reports/{rid}", headers=h).json()
+    assert before["snapshot"]["charger"]["model"] == "Estação Âncora / North"
     changed = command(
         app,
         [
@@ -216,12 +227,13 @@ def test_charger_add_patch_and_technician_report_assignment(setup, monkeypatch):
             cid,
             added["id"],
             "--set",
-            "address=Rua nova",
+            "address=Praça São João / South",
             "--set",
             "connectors=Mennekes Type 2",
         ],
     )
     assert changed["details"]["serial"] == "001"
+    assert changed["details"]["address"] == "Praça São João / South"
     assert c.get(f"/api/reports/{rid}", headers=h).json() == before
     monkeypatch.setattr(cli.getpass, "getpass", lambda _: "TechPassword123!")
     tech = command(app, ["users", "create", "--email", "tech@lem.pt", "--name", "Tech"])

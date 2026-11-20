@@ -207,3 +207,7 @@ record, reimport the source workbook into the intended contract.
 ### Upgrade to 0.5.3
 
 Update the API and latest-client setting before installing client 0.5.3. Startup adds work-order planning, notification, cancellation and draft-recovery tables. On upgrade, the database uses the first recorded server save to associate ordinary drafts with visits that were resolved later. Legacy records without an audit entry use the stored start time. The minimum client remains 0.2.6. Existing contracts, full-contract assignments, reports and evidence keep their identifiers.
+
+### Upgrade to 0.5.4
+
+Coordinate the server and device update. Set both the minimum and latest compatible client to 0.5.4. Earlier clients omit the originating work item and can attribute a delayed report to a different visit. They receive an upgrade explanation at login and on authenticated requests. Preserve the existing application profile during installation so field staff can resume or recover pending edits.

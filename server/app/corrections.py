@@ -142,7 +142,7 @@ def commit(db, user, report, body, validate, current_template=None):
     correction = db.get(ReportCorrection, report.id)
     if not correction or correction.editor_id != user.id:
         raise HTTPException(403, "Cópia de correção não pertence a este administrador")
-    fingerprint = hashlib.sha256(json.dumps(body.model_dump(), sort_keys=True, ensure_ascii=True).encode()).hexdigest()
+    fingerprint = hashlib.sha256(json.dumps(body.model_dump(exclude={"work_item_id"}), sort_keys=True, ensure_ascii=True).encode()).hexdigest()
     if correction.state == "committed":
         if correction.commit_digest != fingerprint:
             raise HTTPException(409, "A correção já foi guardada com outros dados")

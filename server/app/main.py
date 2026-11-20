@@ -149,7 +149,17 @@ class OpeningStationIdentity(BaseModel):
     serial: str = Field(max_length=32767)
 
 
+REPORT_LIMITS = json.loads((Path(__file__).resolve().parents[2] / "shared/report-limits.json").read_text(encoding="utf-8"))
+
+
+def check_payload_size(payload):
+    size = len(json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+    if size > REPORT_LIMITS["payload_utf8_bytes"]:
+        raise HTTPException(413, "Report demasiado grande. Reduza o texto das observações.")
+
+
 class ReportInput(BaseModel):
+    work_item_id: uuid.UUID | None = None
     station_identity_at_start: OpeningStationIdentity | None = None
     # A v6 report already closed offline still uploads photos in a draft staging phase.
     frozen_history: bool = Field(default=False, strict=True)
@@ -379,6 +389,8 @@ def create_app(url=None, bootstrap=True):
             raise HTTPException(404, "Report inexistente")
         charger = db.get(Charger, r.charger_id)
         accessible(db, user, charger.contract_id, target=charger.id, report_id=rid, working=write)
+        if write and (item := work_orders.bound_item(db, rid)) and item.state != "pending" and r.status == "draft":
+            raise HTTPException(403, "A visita de origem terminou. O rascunho está disponível para consulta.")
         corrections.gate(db, user, rid)
         if write and r.owner_id != user.id:
             raise HTTPException(
@@ -439,6 +451,7 @@ def create_app(url=None, bootstrap=True):
         return {
             "id": r.id,
             "contract_id": contract_id,
+            "work_item_id": item.id if (item := work_orders.bound_item(db, r.id)) else None,
             "station_id": charger.station_id,
             "presentation": contract_presentation(db, contract_id),
             "identifier": report_identifier({"snapshot": r.snapshot}),
@@ -720,10 +733,12 @@ def create_app(url=None, bootstrap=True):
 
     # Return lightweight report summaries in bulk; avoid loading payloads/photos per charger.
     @app.get("/api/contracts/{cid}/chargers")
-    def chargers(cid: str, u=Depends(user_dep), db=Depends(db_dep)):
+    def chargers(cid: str, include_detached: bool = False, u=Depends(user_dep), db=Depends(db_dep)):
         accessible(db, u, cid, scoped_listing=db.info.get("order_catalogue"))
         limited = u.role != "admin" and not db.get(Assignment, (u.id, cid))
-        members = select(Charger).where(Charger.contract_id == cid, attached_charger())
+        members = select(Charger).where(Charger.contract_id == cid)
+        if not include_detached:
+            members = members.where(attached_charger())
         visible = Charger.contract_id == cid
         if limited:
             granted = work_orders.assigned_items(u.id)
@@ -813,9 +828,8 @@ def create_app(url=None, bootstrap=True):
 
     @app.put("/api/contracts/{cid}/chargers/{charger_id}/notes")
     def save_notes(cid: str, charger_id: str, body: ContractNotesEdit, u=Depends(admin), db=Depends(db_dep)):
-        accessible(db, u, cid, write=True)
-        # Imports and detach use this same lock, including on SQLite.
         lock_catalogue(db)
+        accessible(db, u, cid, write=True)
         charger, attached = membership_notes(db, cid, charger_id)
         if not attached:
             raise HTTPException(409, "Este ID foi retirado do contrato")
@@ -853,8 +867,8 @@ def create_app(url=None, bootstrap=True):
 
     @app.delete("/api/contracts/{cid}/chargers/{charger_id}")
     def detach_charger(cid: str, charger_id: str, u=Depends(admin), db=Depends(db_dep)):
-        accessible(db, u, cid, write=True)
         lock_catalogue(db)
+        accessible(db, u, cid, write=True)
         charger = db.scalar(select(Charger).where(Charger.id == charger_id, Charger.contract_id == cid)
                             .with_for_update())
         if charger is None:
@@ -976,6 +990,7 @@ def create_app(url=None, bootstrap=True):
         file: UploadFile = File(),
         mapping: str = Form(),
         commit: bool = Form(False),
+        operation_id: uuid.UUID | None = Form(None),
         u=Depends(admin),
         db=Depends(db_dep),
     ):
@@ -993,17 +1008,27 @@ def create_app(url=None, bootstrap=True):
         # moving while a large workbook is decoded. Recheck access/retention
         # afterwards, then acquire the final lock directly (never upgrade a
         # shared lock). Only the database commit phase serializes writers.
-        contract = accessible(db, u, cid, write=commit)
         if not commit:
-            return import_preview(result)
+            accessible(db, u, cid)
+            preview = import_preview(result)
+            preview["operation_id"] = uid()
+            return preview
         records = import_records(result)
+        lock_catalogue(db)
+        contract = accessible(db, u, cid, write=True)
+        digest = hashlib.sha256(data).hexdigest()
+        batch = str(operation_id) if operation_id else uid()
+        prior = db.get(ImportBatch, batch)
+        if prior:
+            if prior.contract_id != cid or prior.mapping != config or prior.digest != digest:
+                raise HTTPException(409, "A confirmação pertence a outra importação. Repita a pré-visualização.")
+            return prior.result
         if logos is not None or issuer is not None:
             current_style = contract_presentation(db, cid)
             save_presentation(db, cid, issuer or current_style["issuer"],
                 [logo["id"] for logo in (logos if logos is not None else current_style["client_logos"])],
                 branding_revision)
         created = changed = 0
-        lock_catalogue(db)
         existing = {
             c.external_id: c for c in db.scalars(select(Charger).options(joinedload(Charger.contract_note))
                                                   .where(Charger.contract_id == cid))
@@ -1032,13 +1057,12 @@ def create_app(url=None, bootstrap=True):
         db.execute(profile.on_conflict_do_update(
             index_elements=[ImportProfile.company], set_={"mapping": profile.excluded.mapping}))
         out = {"created": created, "updated": changed}
-        batch = uid()
         db.add(
             ImportBatch(
                 id=batch,
                 contract_id=cid,
                 mapping=config,
-                digest=hashlib.sha256(data).hexdigest(),
+                digest=digest,
                 result=out,
             )
         )
@@ -1105,8 +1129,7 @@ def create_app(url=None, bootstrap=True):
         # Validate the projected text, not only the shorter inputs from which
         # migration may have merged it. GET and PUT must return the same payload.
         body.payload = corrected_draft_payload(body.payload, r.template, r.status, upgrade=False)
-        if len(json.dumps(body.payload)) > 300000:
-            raise HTTPException(413, "Report demasiado grande")
+        check_payload_size(body.payload)
         items = {i["id"]: i for s in r.template["sections"] for i in s["items"]}
         answers = body.payload.get("answers", {})
         if not isinstance(answers, dict) or any(k not in items for k in answers):
@@ -1127,9 +1150,9 @@ def create_app(url=None, bootstrap=True):
             # General notes can merge several formerly independent 8000-character
             # fields (up to 24002 in the v6 migration). Keep a bounded allowance
             # for that complete text, plus the unchanged total payload limit.
-            notes_limit = 32000 if items[key]["kind"] == "notes" else 8000
-            if len(a.get("value", "")) > 8000 or len(a.get("notes", "")) > notes_limit:
-                raise HTTPException(422, "Texto demasiado longo")
+            notes_limit = REPORT_LIMITS["general_note_characters" if items[key]["kind"] == "notes" else "answer_characters"]
+            if len(a.get("value", "")) > REPORT_LIMITS["answer_characters"] or len(a.get("notes", "")) > notes_limit:
+                raise HTTPException(422, key + ": texto demasiado longo")
             if "assessment" in a and (not items[key].get("reading_required") or a["assessment"] not in ("OK", "NOK")):
                 raise HTTPException(422, "Avaliação inválida")
             if items[key]["kind"] == "status" and a.get("value", "") not in ["", "OK", "NOK", "NA"]:
@@ -1181,6 +1204,7 @@ def create_app(url=None, bootstrap=True):
                     errors.append(key + ": falta fotografia")
             if errors:
                 raise HTTPException(422, {"message": "Checklist incompleta", "items": errors})
+        check_payload_size(body.payload)
 
     # Create or update a report with optimistic concurrency. Ownership/revision conditions
     # are enforced in the final UPDATE, not just in an earlier read. Closure validates all evidence.
@@ -1189,8 +1213,7 @@ def create_app(url=None, bootstrap=True):
         uuid_check(rid)
         if body.status not in ["draft", "closed"]:
             raise HTTPException(422, "Estado inválido")
-        if len(json.dumps(body.payload)) > 300000:
-            raise HTTPException(413, "Report demasiado grande")
+        check_payload_size(body.payload)
         charger = db.get(Charger, body.charger_id)
         if not charger:
             raise HTTPException(404, "Carregador inexistente")
@@ -1198,9 +1221,9 @@ def create_app(url=None, bootstrap=True):
         # and imports. Acquire the catalogue before the contract and its membership.
         full_grant = u.role == "admin" or db.scalar(select(Assignment.user_id).where(
             Assignment.user_id == u.id, Assignment.contract_id == charger.contract_id))
-        if body.base_revision == 0 or body.status == "closed" or not full_grant:
+        if body.base_revision == 0 or body.status == "closed" or body.work_item_id or not full_grant:
             lock_catalogue(db)
-        contract = accessible(db, u, charger.contract_id, target=charger.id, working=True)
+        contract = accessible(db, u, charger.contract_id, target=charger.id, report_id=rid, working=True)
         charger = db.scalar(select(Charger).where(Charger.id == body.charger_id).with_for_update())
         if db.get(DeletedReport, rid):
             raise HTTPException(410, corrections.replaced_detail(db, rid))
@@ -1208,6 +1231,19 @@ def create_app(url=None, bootstrap=True):
         r = db.scalar(select(Report).where(Report.id == rid).with_for_update()
                       .execution_options(populate_existing=True))
         creating = r is None
+        bound = work_orders.bound_item(db, rid)
+        visit = bound
+        if body.work_item_id:
+            visit = db.get(work_orders.WorkItem, str(body.work_item_id))
+            if (not visit or visit.target != charger.id or visit.state != "pending"
+                    or (bound and visit.id != bound.id)):
+                raise HTTPException(409, "A visita de origem mudou ou terminou. A cópia local foi conservada.")
+        elif not full_grant and not bound:
+            # Existing pre-upgrade server drafts can adopt their still-active
+            # visit. A new offline UUID must identify its originating item.
+            visit = work_orders.pending_item(db, charger.id) if r else None
+            if visit is None:
+                raise HTTPException(403, "Indique a tarefa de origem para enviar este rascunho.")
         if r:
             # Authorize and check the revision before migrating. Validation below
             # atomically upgrades editable v6 data and checks the resulting schema.
@@ -1225,9 +1261,8 @@ def create_app(url=None, bootstrap=True):
         else:
             # One field draft per planned visit. Keep ordinary unplanned contract
             # work independent. Exact retries still use the existing report above.
-            planned = db.scalar(select(work_orders.WorkItem.id).where(work_orders.WorkItem.target == charger.id,
-                                work_orders.WorkItem.kind == "preventive", work_orders.WorkItem.state == "pending"))
-            if planned and db.scalar(work_orders.ordinary_drafts().where(Report.charger_id == charger.id).limit(1)):
+            planned = visit or work_orders.pending_item(db, charger.id)
+            if planned and db.scalar(work_orders.current_drafts(planned).limit(1)):
                 raise HTTPException(409, "Este ID já tem um rascunho. Consulte o proprietário na ordem. A cópia local foi conservada.")
             if db.get(DetachedCharger, charger.id):
                 raise HTTPException(409, "Este PCVE foi retirado do contrato. O rascunho local foi conservado.")
@@ -1274,6 +1309,9 @@ def create_app(url=None, bootstrap=True):
             )
             db.add(r)
             db.flush()
+        if visit and not bound:
+            db.add(work_orders.WorkItemDraft(item_id=visit.id, report_id=rid))
+            db.flush()
         validate_report_payload(db, r, body)
         if creating and r.template.get("version", 0) >= 4:
             # Freeze the identity once. Subsequent edits and retried uploads cannot
@@ -1282,7 +1320,12 @@ def create_app(url=None, bootstrap=True):
                                        body.payload.get("answers", {}))
             r.snapshot = {**r.snapshot, "charger": opening}
         next_snapshot = r.snapshot
+        finished = None
         if body.status == "closed":
+            finished = report_time(body.payload, "finished")
+            corrections.checked_times({"started": r.started, "finished": finished})
+            if body.payload.get("started") and report_time(body.payload, "started") != report_time({"started": r.started}, "started"):
+                raise HTTPException(422, "O início do report deve coincidir com o rascunho guardado")
             try:
                 next_snapshot = close_identity(db, charger, r, body.payload, u.id)
             except StationConflict as error:
@@ -1300,7 +1343,7 @@ def create_app(url=None, bootstrap=True):
                 revision=new_revision,
                 status=body.status,
                 updated=updated,
-                finished=report_time(body.payload, "finished") if body.status == "closed" else None,
+                finished=finished,
             )
             .execution_options(synchronize_session=False)
         )
@@ -1309,13 +1352,13 @@ def create_app(url=None, bootstrap=True):
         if body.status == "closed":
             work_orders.accept_closure(db, charger, rid, u, updated)
         audit(db, u, "report." + body.status, rid)
-        db.commit()
-        db.expire_all()
-        out = report_json(db, db.get(Report, rid))
+        db.refresh(r)
+        out = report_json(db, r)
         if body.status == "closed":
             out["station_update"] = {"station_id": charger.station_id, "external_id": charger.external_id,
                                      "details": charger.details,
                                      "updated": charger.station.updated if charger.station is not None else None}
+        db.commit()
         return out
 
     @app.post("/api/reports/{rid}/corrections")
@@ -1325,21 +1368,24 @@ def create_app(url=None, bootstrap=True):
         source = report_access(db, u, rid)
         report = corrections.begin(db, u, source, body.id, body.base_revision, TEMPLATE)
         audit(db, u, "report.correction.begin", report.id)
+        result = report_json(db, report)
         db.commit()
-        return report_json(db, report)
+        return result
 
     @app.post("/api/reports/{rid}/correction/commit")
     def commit_correction(rid: str, body: ReportInput, u=Depends(admin), db=Depends(db_dep)):
         corrections.desktop_admin(db, u)
         corrections.lock_report_users(db, rid)
+        lock_catalogue(db)
         report = report_access(db, u, rid)
         report = corrections.commit(db, u, report, body, validate_report_payload, TEMPLATE)
         correction = db.get(ReportCorrection, report.id)
         db.execute(update(work_orders.WorkItem).where(work_orders.WorkItem.report_id == correction.source_id)
                    .values(report_id=report.id))
         audit(db, u, "report.correction.commit", report.id)
+        result = report_json(db, report)
         db.commit()
-        return report_json(db, report)
+        return result
 
     # List administrators plus technicians assigned to this report's contract.
     @app.get("/api/reports/{rid}/owners")
@@ -1408,9 +1454,10 @@ def create_app(url=None, bootstrap=True):
             )
         )
         audit(db, u, "report.transfer", rid)
+        db.refresh(r)
+        result = report_json(db, r)
         db.commit()
-        db.expire_all()
-        return report_json(db, db.get(Report, rid))
+        return result
 
     # Administrative deletion is intentionally broader than editing ownership.
     # Delete image rows and create a permanent report tombstone in the same transaction.
@@ -1479,6 +1526,17 @@ def create_app(url=None, bootstrap=True):
         db=Depends(db_dep),
     ):
         uuid_check(pid)
+        data = file_bytes(file, limit=60 * 1024 * 1024)
+        # Images are fully decoded; videos receive bounded container/stream inspection.
+        # Reject unsupported evidence before committing an immutable attachment.
+        try:
+            mime = inspect_evidence(data)
+        except InvalidImage as error:
+            raise HTTPException(422, str(error))
+        sha = hashlib.sha256(data).hexdigest()
+        # Inspect bytes before taking the writer reservation. Recheck the grant,
+        # revision and draft state under the same lock as closure and planning.
+        lock_catalogue(db)
         r = report_access(db, u, rid, write=True)
         # Row lock serializes photos with closure on PostgreSQL.
         # Re-read under the lock: deletion may win after report_access().
@@ -1500,14 +1558,6 @@ def create_app(url=None, bootstrap=True):
             persist_upgrade(db, r, TEMPLATE)
         if checkpoint not in {i["id"] for s in r.template["sections"] for i in s["items"]}:
             raise HTTPException(422, "Checkpoint inválido")
-        data = file_bytes(file, limit=60 * 1024 * 1024)
-        # Images are fully decoded; videos receive bounded container/stream inspection.
-        # Reject unsupported evidence before committing an immutable attachment.
-        try:
-            mime = inspect_evidence(data)
-        except InvalidImage as error:
-            raise HTTPException(422, str(error))
-        sha = hashlib.sha256(data).hexdigest()
         # Compare identity columns only; do not load the stored image for a retry.
         existing = db.execute(
             select(Photo.report_id, Photo.checkpoint, Photo.digest).where(Photo.id == pid)
@@ -1557,6 +1607,7 @@ def create_app(url=None, bootstrap=True):
         rid: str, pid: str, base_revision: int, u=Depends(user_dep), db=Depends(db_dep)
     ):
         uuid_check(pid)
+        lock_catalogue(db)
         r = report_access(db, u, rid, write=True)
         # Re-read under the lock: deletion may win after report_access().
         # Refreshing the stale object would raise an internal SQLAlchemy error.

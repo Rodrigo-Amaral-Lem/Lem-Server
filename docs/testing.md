@@ -200,3 +200,9 @@ lost acknowledgements and detachment. It uses generated workbooks and disposable
 `server/tests/test_work_orders.py` checks planning and completion, registration of impediments, mobile receipts and Lisbon civil-time boundaries, independent station operator and customer, scoped grants and competing administrators. With the disposable PostgreSQL fixture configured the same lifecycle and competing-plan tests also exercise real database locks.
 
 The work-order suite exercises simultaneous draft claims, cancellation retries, removal of scoped grants and reusing released IDs in another order on SQLite and PostgreSQL.
+
+## Report, visit and import integrity
+
+Run `server/tests/test_visit_sync_integrity.py` on SQLite and on a disposable PostgreSQL database using the documented `LEM_TEST_POSTGRES_URL` fixture. The pair of backends covers competing report acknowledgements, closure during photo inspection, different crews revisiting a charger, partial order completion, catalogue lock ordering, UTF-8 payload limits, clock offsets, detached export history and import receipts. The tests establish transaction ordering with synchronization events.
+
+`server/tests/test_admin_cli.py` exercises PCVE creation and editing with mixed Portuguese and English details. On Windows, run `python -X utf8=0 -m pytest server/tests/test_admin_cli.py` in a cp1252 locale to verify the console reads the shared checklist as UTF-8.

@@ -41,7 +41,7 @@ def test_frozen_identifier_matches_catalogue_pdf_zip_and_original_uuid(setup):
     charger = client.get(catalogue_url, headers=headers).json()[0]
     rid = str(uuid.uuid4())
     url = f"/api/reports/{rid}"
-    payload = {"answers": answers(), "finished": "2026-07-01T23:05:06Z"}
+    payload = {"answers": answers(), "started": "2026-07-01T22:05:06Z", "finished": "2026-07-01T23:05:06Z"}
     payload["answers"]["EST.15"] = {"value": "NA", "notes": "Sem POS", "suggested_notes": "Sem POS"}
     payload["answers"]["EST.18"] = {"value": "", "notes": "POS referido pelo técnico"}
     body = {"checklist_version": TEMPLATE["version"], "charger_id": charger["id"],

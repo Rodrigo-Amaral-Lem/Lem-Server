@@ -20,7 +20,7 @@ from app.pdf_report import build_pdf
 def setup(tmp_path, monkeypatch):
     monkeypatch.setenv("ADMIN_PASSWORD", "StrongPassword123!")
     app = create_app("sqlite:///" + str(tmp_path / "test.db"))
-    c = TestClient(app, headers={"X-Lem-Client-Version": "0.2.6"})
+    c = TestClient(app, headers={"X-Lem-Client-Version": "0.5.4"})
     token = c.post(
         "/api/login", json={"email": "admin@lem.pt", "password": "StrongPassword123!"}
     ).json()["token"]

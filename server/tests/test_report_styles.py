@@ -20,7 +20,7 @@ def test_saved_format_survives_new_session_and_server_restart(setup):
     database_url = engine.url.render_as_string(hide_password=False)
     engine.dispose()
     restarted = create_app(database_url)
-    with TestClient(restarted, headers={'X-Lem-Client-Version': '0.2.6'}) as fresh:
+    with TestClient(restarted, headers={'X-Lem-Client-Version': '0.5.4'}) as fresh:
         login = fresh.post('/api/login', json={'email': 'admin@lem.pt', 'password': 'StrongPassword123!'})
         assert login.status_code == 200, login.text
         auth = {'Authorization': 'Bearer ' + login.json()['token']}

@@ -81,6 +81,7 @@ def test_lifecycle_and_scoped_access(backend, request, monkeypatch):
     local += timedelta(days=3)
     # After the deadline the technician can finish the second item first.
     assert client.put(report, headers=tech, json={**body,"charger_id":extra}).status_code == 403
+    body["work_item_id"] = order(tech)["items"][1]["id"]
     client.put(report, headers=tech, json=body).raise_for_status()
     assert client.get(report, headers=other).status_code == 403
     draft, = order(tech)["items"][1]["drafts"]
@@ -188,6 +189,8 @@ def test_cancel_releases_scoped_memberships_and_competing_draft_claims(backend, 
     assert client.put(next_url + "/cancel", headers=admin, json={"revision":1}).status_code == 409
     body = dict(charger_id=target, checklist_version=TEMPLATE["version"], base_revision=0,
                 status="draft", payload={"answers":{}})
+    current, = client.get("/api/work-orders", headers=ana).json()["orders"]
+    body["work_item_id"] = current["items"][0]["id"]
     def claim(user):
         return client.put("/api/reports/" + str(uuid4()), headers=user, json=body).status_code
     with ThreadPoolExecutor(max_workers=2) as pool:

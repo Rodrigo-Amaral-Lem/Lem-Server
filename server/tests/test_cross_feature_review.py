@@ -78,7 +78,7 @@ def test_force_purge_never_commits_deadline_without_actual_deletion(setup, monke
 def test_console_text_metadata_remains_usable_by_native_client(setup, tmp_path):
     _, _, contract, app = setup
     payload = tmp_path / "charger.json"
-    payload.write_text('{"model":"Test", "serial":12345, "postal_code":1234, "connectors":"CCS2"}')
+    payload.write_text('{"model":"Medição Âncora / North", "serial":12345, "postal_code":1234, "connectors":"CCS2"}', encoding="utf-8")
     result = command(
         app,
         [
@@ -93,6 +93,9 @@ def test_console_text_metadata_remains_usable_by_native_client(setup, tmp_path):
     )
     assert isinstance(result["details"]["serial"], str), "Native QString extraction requires text"
     assert isinstance(result["details"]["postal_code"], str)
+    assert result["details"]["model"] == "Medição Âncora / North"
+    changed = command(app, ["chargers", "update", contract["id"], result["id"], "--set", "model=Ação / South"])
+    assert changed["details"]["model"] == "Ação / South"
 
 
 def test_password_prompt_does_not_modify_an_account_deleted_while_waiting(setup, monkeypatch):

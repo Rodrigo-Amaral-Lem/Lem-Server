@@ -119,7 +119,12 @@ can also edit notes in the app using the notes icon beside the contract card's n
 An explicitly mapped notes column belongs to the membership even if it has a custom header
 in the Stations template. When that column contains formulas, recalculate and save the workbook
 in Excel before importing. Preview identifies cells without a usable calculated result and the
-server blocks the import until they are corrected.
+server blocks the import until they are corrected. Preview also identifies the row and cell of an
+invalid connector count. Correct the workbook before importing any rows in that batch.
+
+If the connection drops after you confirm a preview, retry that same preview. The server returns
+its recorded result and preserves notes edited since the import. Start a new preview when you
+intend to apply the workbook again.
 
 Each PCVE has one `Station` record. A `Charger` UUID links that record to a contract. The contract
 import creates or updates the station and adds the link. Every linked contract reads the same

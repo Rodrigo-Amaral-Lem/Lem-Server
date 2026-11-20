@@ -11,9 +11,9 @@ import os
 import re
 from urllib.parse import urlparse
 
-VERSION = "0.5.3"
-# Consolidation changes the release number, not the checklist-v7 protocol floor.
-MINIMUM_CLIENT = "0.2.6"
+VERSION = "0.5.4"
+# Order-scoped first uploads must carry their originating visit.
+MINIMUM_CLIENT = "0.5.4"
 HEADER = "X-Lem-Client-Version"
 
 
@@ -36,7 +36,7 @@ class ClientPolicy:
                 "Invalid Lem client policy: require minimum <= latest (major.minor.patch)"
             )
         # A stale deployment .env must not admit clients that cannot represent
-        # the new checklist/units. Preserve stricter administrator policy values.
+        # the originating visit on delayed uploads. Preserve stricter administrator policy values.
         if low < version_tuple(MINIMUM_CLIENT):
             self.minimum = MINIMUM_CLIENT
         if high < version_tuple(self.minimum):

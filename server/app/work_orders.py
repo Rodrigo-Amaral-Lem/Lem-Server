@@ -19,18 +19,32 @@ def lisbon_now():
     return datetime.now(ZoneInfo("Europe/Lisbon"))
 
 
+def has_started(order, today):
+    # Earlier releases permitted postponing an order after a recorded result.
+    return order.start <= today or any(item.state in ("closed", "invalid") for item in order.items)
+
+
 def assigned_items(user_id, *, writable=False, report_id=None):
     query = (select(WorkItem.target).join(WorkAssignee, WorkAssignee.order_id == WorkItem.order_id)
              .join(WorkOrder, WorkOrder.id == WorkItem.order_id)
              .where(WorkAssignee.user_id == user_id, WorkItem.kind == "preventive", WorkItem.state != "cancelled"))
+    if report_id is not None:
+        bindings = (select(WorkItemDraft.item_id).where(WorkItemDraft.report_id == report_id)
+                    .correlate_except(WorkItemDraft))
+        current = (WorkItem.state == "pending") & (~bindings.exists() | WorkItem.id.in_(bindings))
+    else:
+        current = WorkItem.state == "pending"
     if writable:
-        return query.where(WorkItem.state == "pending", WorkOrder.start <= lisbon_now().date().isoformat())
+        completed_item = aliased(WorkItem)
+        has_result = select(completed_item.id).where(completed_item.order_id == WorkOrder.id,
+                    completed_item.state.in_(("closed", "invalid"))).exists()
+        return query.where(current, (WorkOrder.start <= lisbon_now().date().isoformat()) | has_result)
     if report_id is not None:
         owned = aliased(Report)
         recovery = (select(WorkItemDraft.item_id).join(owned, owned.id == WorkItemDraft.report_id)
                     .where(WorkItemDraft.report_id == report_id, owned.owner_id == user_id,
                            owned.status == "draft").correlate_except(WorkItemDraft, owned))
-        return query.where((WorkItem.state == "pending") | (WorkItem.report_id == report_id)
+        return query.where(current | (WorkItem.report_id == report_id)
                            | WorkItem.id.in_(recovery))
     return query
 
@@ -56,16 +70,38 @@ def ordinary_drafts():
     return select(Report.id).where(Report.status == "draft", ~Report.id.in_(select(ReportCorrection.id)))
 
 
+def current_drafts(item):
+    # Unbound drafts predate this visit or the association protocol. A recovery
+    # binding must never claim the next visit's draft slot.
+    return ordinary_drafts().where(Report.charger_id == item.target,
+        (~Report.id.in_(select(WorkItemDraft.report_id))) |
+        Report.id.in_(select(WorkItemDraft.report_id).where(WorkItemDraft.item_id == item.id)))
+
+
+def pending_item(db, target):
+    return db.scalar(select(WorkItem).where(WorkItem.kind == "preventive",
+                     WorkItem.target == target, WorkItem.state == "pending"))
+
+
+def bound_item(db, rid):
+    # Older releases could associate a draft with several resolved visits.
+    return db.scalar(select(WorkItem).join(WorkItemDraft, WorkItemDraft.item_id == WorkItem.id)
+                     .where(WorkItemDraft.report_id == rid)
+                     .order_by(WorkItem.resolved_at.asc().nulls_last(), WorkItem.id).limit(1))
+
+
 def preserve_drafts(db, item):
-    for rid in db.scalars(ordinary_drafts().where(Report.charger_id == item.target)):
+    for rid in db.scalars(ordinary_drafts().where(Report.charger_id == item.target,
+                           ~Report.id.in_(select(WorkItemDraft.report_id)))):
         db.add(WorkItemDraft(item_id=item.id, report_id=rid))
 
 
 def accept_closure(db, charger, report_id, actor, timestamp):
     # Called inside the validated report transaction under the catalogue lock.
     # A separately authorised full-contract closure can also satisfy planned work.
-    item = db.scalar(select(WorkItem).where(WorkItem.kind == "preventive",
-                      WorkItem.target == charger.id, WorkItem.state == "pending"))
+    item = bound_item(db, report_id) or pending_item(db, charger.id)
+    if item and item.state != "pending":
+        raise HTTPException(409, "A visita de origem já terminou. O report foi conservado.")
     if item:
         order = db.get(WorkOrder, item.order_id)
         preserve_drafts(db, item)
@@ -141,15 +177,17 @@ def register(app, db_dep, user_dep, admin, audit):
         for item_id, rid in db.execute(select(WorkItemDraft.item_id, WorkItemDraft.report_id)
                 .where(WorkItemDraft.item_id.in_(item_ids))):
             recovery.setdefault(rid, []).append(item_id)
+        historical = (select(WorkItemDraft.report_id).join(WorkItem, WorkItem.id == WorkItemDraft.item_id)
+                      .where(WorkItem.state != "pending"))
         reports, recovered = {}, {}
         count = select(func.count(Photo.id)).where(Photo.report_id == Report.id).scalar_subquery()
-        for rid, target, owner, name, revision, photo_count in db.execute(
-                select(Report.id, Report.charger_id, Report.owner_id, User.name, Report.revision, count)
+        for rid, target, owner, name, revision, photo_count, archived in db.execute(
+                select(Report.id, Report.charger_id, Report.owner_id, User.name, Report.revision, count, Report.id.in_(historical))
                 .join(User, User.id == Report.owner_id)
                 .where(Report.id.in_(ordinary_drafts()), (Report.charger_id.in_(pending) | Report.id.in_(recovery)))
                 .order_by(Report.updated.desc(), Report.id)):
             summary = dict(id=rid, owner_id=owner, owner_name=name, revision=revision, photo_count=photo_count)
-            if target in pending:
+            if target in pending and not archived:
                 reports.setdefault(target, []).append(summary)
             if u.role == "admin" or owner == u.id:
                 for iid in recovery.get(rid, []):
@@ -171,7 +209,7 @@ def register(app, db_dep, user_dep, admin, audit):
             result.append(dict(cancelled_at=cancelled.cancelled_at if cancelled else None,
                                cancelled_by=cancelled.actor_id if cancelled else None, id=o.id, code=o.code, start=o.start, due=o.due, completed=o.completed,
                                revision=o.revision, following=u.id in o.followers, technicians=assignees.get(o.id, []),
-                               items=rows, started=o.start <= today))
+                               items=rows, started=has_started(o, today)))
         return {"today": today, "orders": result}
 
     @app.get("/api/work-order-candidates")
@@ -199,11 +237,16 @@ def register(app, db_dep, user_dep, admin, audit):
         today = lisbon_now().date().isoformat()
         if due < start or (start < today and (not order or start != order.start)):
             raise HTTPException(422, "Verifique as datas. Um novo início deve ser hoje ou posterior.")
+        if order and start != order.start and has_started(order, today):
+            raise HTTPException(409, "A ordem já começou. Mantenha a data de início e ajuste o prazo.")
         if set(techs) != set(db.scalars(select(User.id).where(User.role == "tech", User.id.in_(techs)))):
             raise HTTPException(422, "Selecione técnicos ativos.")
         old = {i.target: i for i in order.items} if order else {}
         if any(i.state != "pending" and i.target not in targets for i in old.values()):
             raise HTTPException(409, "Os resultados já registados devem permanecer na ordem.")
+        for target in old.keys() - set(targets):
+            if db.scalar(current_drafts(old[target]).limit(1)):
+                raise HTTPException(409, "O ID tem um rascunho. Conserve a tarefa e o acesso ao report.")
         additions = set(targets) - old.keys()
         eligible = {row.id: row for row in db.execute(available(db).where(Charger.id.in_(additions)))}
         if eligible.keys() != additions:
@@ -251,7 +294,7 @@ def register(app, db_dep, user_dep, admin, audit):
         previous = db.get(WorkOrderCancellation, order.id)
         if previous:
             return {"cancelled_at": previous.cancelled_at, "revision": order.revision}
-        if order.revision != body.revision or order.completed or order.start <= lisbon_now().date().isoformat():
+        if order.revision != body.revision or order.completed or has_started(order, lisbon_now().date().isoformat()):
             raise HTTPException(409, "Só pode cancelar uma ordem futura. Atualize a ordem.")
         timestamp = now()
         for item in order.items:

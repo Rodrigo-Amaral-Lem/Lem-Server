@@ -34,7 +34,7 @@ def postgres_setup(monkeypatch):
     app = None
     try:
         app = create_app(scoped.render_as_string(hide_password=False))
-        with TestClient(app, headers={'X-Lem-Client-Version': '0.2.6'}) as client:
+        with TestClient(app, headers={'X-Lem-Client-Version': '0.5.4'}) as client:
             token = client.post('/api/login', json={'email': 'admin@lem.pt', 'password': 'StrongPassword123!'}).json()['token']
             headers = {'Authorization': 'Bearer ' + token}
             contract = client.post('/api/contracts', headers=headers,

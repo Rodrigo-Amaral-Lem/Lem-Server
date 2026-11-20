@@ -14,7 +14,7 @@ from defusedxml.common import DefusedXmlException
 from defusedxml.ElementTree import iterparse as safe_iterparse
 from xml.etree.ElementTree import ParseError
 from openpyxl.xml import DEFUSEDXML
-from .checklist import connector_text
+from .checklist import connector_names, connector_text
 
 if not DEFUSEDXML:
     raise RuntimeError("Excel imports require defusedxml protection")
@@ -252,6 +252,14 @@ def parse(data, mapping, *, contract_notes=True):
             # Canonical display terminology; source below retains the original cell.
             if "connectors" in rec:
                 rec["connectors"] = connector_text(rec["connectors"])
+                try:
+                    connector_names(rec["connectors"])
+                except ValueError as error:
+                    column = openpyxl.utils.get_column_letter(indexes["connectors"] + 1)
+                    cell = f"{column}{num}"
+                    errors.append({"row": num, "column": column, "cell": cell, "field": "connectors",
+                                   "id": ext, "error": f"{cell}: {error}"})
+                    continue
             missing = []
             if standard:
                 for col, field, label, required in STATIONS_COLUMNS:
