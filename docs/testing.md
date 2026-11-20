@@ -196,3 +196,7 @@ alone do not satisfy the user's instruction. Keep per-run evidence in ongoing_wo
 The `test_contract_notes.py` suite covers membership-scoped Excel instructions, old sheets,
 standalone catalogue imports, assigned readers, Android administrator writes, concurrent edits,
 lost acknowledgements and detachment. It uses generated workbooks and disposable SQLite data.
+
+`server/tests/test_work_orders.py` checks planning and completion, registration of impediments, mobile receipts and Lisbon civil-time boundaries, independent station operator and customer, scoped grants and competing administrators. With the disposable PostgreSQL fixture configured the same lifecycle and competing-plan tests also exercise real database locks.
+
+The work-order suite exercises simultaneous draft claims, cancellation retries, removal of scoped grants and reusing released IDs in another order on SQLite and PostgreSQL.

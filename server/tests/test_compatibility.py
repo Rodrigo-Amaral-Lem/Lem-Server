@@ -86,7 +86,7 @@ def test_shipped_policy_accepts_current_app(monkeypatch):
     monkeypatch.delenv("LEM_UPDATE_URL", raising=False)
     policy = ClientPolicy()
     assert policy.minimum == "0.2.6"
-    assert policy.latest == "0.5.1"
+    assert policy.latest == "0.5.3"
     assert not policy.evaluate("0.2.0")["compatible"]
     assert not policy.evaluate("0.2.0")["update_available"]
     assert policy.evaluate("0.2.6")["compatible"]
@@ -96,14 +96,14 @@ def test_shipped_policy_accepts_current_app(monkeypatch):
     assert policy.evaluate("0.4.1")["update_available"]
     assert policy.evaluate("0.5.0")["compatible"]
     assert policy.evaluate("0.5.0")["update_available"]
-    assert not policy.evaluate("0.5.1")["update_available"]
+    assert not policy.evaluate("0.5.3")["update_available"]
     for version in ["0.1.38", "0.1.48", "0.1.51", "0.1.55", "0.1.57", "0.1.58", "0.2.1", "0.2.2", "0.2.3", "0.2.4", "0.2.5"]:
         assert not policy.evaluate(version)["compatible"]
 
 
 @pytest.mark.parametrize("version,update", [
     ("0.2.6", True), ("0.3.0", True), ("0.3.1", True), ("0.3.2", True),
-    ("0.4.0", True), ("0.4.1", True), ("0.5.0", True), ("0.5.1", False),
+    ("0.4.0", True), ("0.4.1", True), ("0.5.0", True), ("0.5.1", True), ("0.5.2", True), ("0.5.3", False),
 ])
 def test_shipped_policy_allows_current_login(tmp_path, monkeypatch, version, update):
     monkeypatch.setenv("ADMIN_PASSWORD", "CompatibilityPassword123!")

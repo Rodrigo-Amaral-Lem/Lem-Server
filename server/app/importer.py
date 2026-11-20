@@ -24,6 +24,7 @@ from .import_profiles import (
     obsolete_station_field,
     clean_station_details,
     is_contract_notes,
+    is_operator_header,
     normalize_contract_notes,
     STATIONS_COLUMNS,
     STATIONS_PROFILE,
@@ -173,7 +174,12 @@ def parse(data, mapping, *, contract_notes=True):
                     raise HTTPException(422, f"Formato Stations: {label} deve usar a coluna {col}")
             # A standard template has a deterministic mapping; import every field,
             # while only the fields marked required need populated cells.
+            operator_headers = [label for label in header if is_operator_header(label)]
+            if len(operator_headers) > 1:
+                raise HTTPException(422, "Cabeçalho de operador repetido")
             columns = {field: label for _, field, label, _ in STATIONS_COLUMNS}
+            if operator_headers:
+                columns["operator"] = operator_headers[0]
 
         if not columns.get("external_id"):
             raise HTTPException(422, "Mapeie external_id")

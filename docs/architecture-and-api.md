@@ -230,3 +230,15 @@ fields. Their historical signatures remain evidence; current questions require a
 GET projects an already-open old correction identically to its transactional write migration.
 `frozen_history: true` permits completing the staged upload of a previously closed offline v6 report;
 the temporary `template.frozen_upload` state disables editing until its original closure completes.
+
+## Work orders
+
+All administrators can plan multiple preventive contract memberships in one ordered list. `GET /api/work-order-candidates` returns attached memberships in live contracts without a closed report or a pending order item. `PUT /api/work-orders/{uuid}` takes the same client-generated id, revision, ISO start/due dates, technician UUIDs and ordered membership UUIDs. Empty orders and repeated targets are rejected. The code uses the original start month and a serialized monthly counter. A resolved item retains its result, actor and time. The item records its maintenance kind, target, station and customer separately from the optional contract reference. The current planner accepts preventive memberships.
+
+`GET /api/work-orders` lists all orders for administrators and assigned orders for technicians. The header `X-Lem-Work-Orders: 1` includes limited contracts in the ordinary catalogue. The server enforces each membership and Lisbon start date on report creation and updates. An independent whole-contract grant remains effective. Overdue items remain actionable. Closing a report resolves its pending membership in the same transaction. Invalidating via `PUT /api/work-orders/{id}/items/{item}/invalid` requires an assigned technician, revision and observation. It leaves the contract eligible for a future visit.
+
+`GET /api/work-orders?include_cancelled=true` also returns cancelled orders, their cancellation time and actor, and their original item sequence. An administrator can `PUT /api/work-orders/{id}/cancel` with the current revision before the Lisbon start day. Pending memberships and reminders are released in the same transaction. Existing results remain in the history. Repeating a successful cancellation returns the recorded result.
+
+Limited contracts include `order_targets` so clients can retain authorised offline rows when another contract refreshes. Planning reserves one ordinary draft per pending membership. Draft summaries expose owner, report revision and attachment count. At resolution, any other existing drafts are recorded for read-only recovery by their still-assigned owners. A removed closed report retains its identifier and completion record with `report_removed` set.
+
+The creator follows automatically. Other administrators subscribe through `PUT /api/work-orders/{id}/follow`. Each installation reads its signed-in user's inbox at `GET /api/work-order-notices/{device}` and acknowledges individual notifications with a PUT to the appended notice UUID. Start notices are returned during the Lisbon start day from 07:00 inclusive to 20:00 exclusive. Old unacknowledged start dates expire. Assignment, impediment and completion events survive offline periods.

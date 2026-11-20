@@ -237,6 +237,78 @@ class Report(Base):
     finished: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
 
+class WorkOrder(Base):
+    __tablename__ = "work_orders"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    code: Mapped[str] = mapped_column(String(40), unique=True)
+    start: Mapped[str] = mapped_column(String(10))
+    due: Mapped[str] = mapped_column(String(10))
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    completed: Mapped[str | None] = mapped_column(String(50))
+    followers: Mapped[list] = mapped_column(JSON)
+    items: Mapped[list["WorkItem"]] = relationship(order_by="WorkItem.position",
+                                                    cascade="all, delete-orphan")
+
+
+class WorkItem(Base):
+    __tablename__ = "work_order_items"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    order_id: Mapped[str] = mapped_column(ForeignKey("work_orders.id"), index=True)
+    position: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(String(40))
+    # Stable target references and display snapshots survive contract retention/purge.
+    # Later maintenance kinds can address a station directly without a contract.
+    target: Mapped[str] = mapped_column(String(36), index=True)
+    contract_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    contract_name: Mapped[str | None] = mapped_column(String(240))
+    station_id: Mapped[str | None] = mapped_column(String(36))
+    client: Mapped[str] = mapped_column(String(120))
+    external_id: Mapped[str] = mapped_column(String(200))
+    state: Mapped[str] = mapped_column(String(12), default="pending")
+    report_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    note: Mapped[str] = mapped_column(Text, default="")
+    resolved_by: Mapped[str | None] = mapped_column(String(36))
+    resolved_at: Mapped[str | None] = mapped_column(String(50))
+
+
+class WorkOrderCancellation(Base):
+    __tablename__ = "work_order_cancellations"
+    order_id: Mapped[str] = mapped_column(ForeignKey("work_orders.id"), primary_key=True)
+    cancelled_at: Mapped[str] = mapped_column(String(50))
+    actor_id: Mapped[str] = mapped_column(String(36))
+
+
+class WorkItemDraft(Base):
+    # Snapshot competing drafts at resolution. Replanning the ID must not
+    # make drafts created on a later visit part of the earlier order.
+    __tablename__ = "work_order_recovery_drafts"
+    item_id: Mapped[str] = mapped_column(ForeignKey("work_order_items.id", ondelete="CASCADE"), primary_key=True)
+    report_id: Mapped[str] = mapped_column(String(36), primary_key=True, index=True)
+
+
+class WorkAssignee(Base):
+    __tablename__ = "work_order_assignees"
+    order_id: Mapped[str] = mapped_column(ForeignKey("work_orders.id"), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), primary_key=True, index=True)
+
+
+class WorkNotice(Base):
+    __tablename__ = "work_order_notices"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    order_id: Mapped[str] = mapped_column(ForeignKey("work_orders.id"), index=True)
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    message: Mapped[str] = mapped_column(Text)
+    created: Mapped[str] = mapped_column(String(50), default=now)
+    day: Mapped[str | None] = mapped_column(String(10))
+
+
+class NoticeReceipt(Base):
+    __tablename__ = "work_order_notice_receipts"
+    notice_id: Mapped[str] = mapped_column(ForeignKey("work_order_notices.id", ondelete="CASCADE"), primary_key=True)
+    device: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+
 # Independent correction history survives source deletion and records replacement links.
 class ReportCorrection(Base):
     __tablename__ = "report_corrections"
@@ -384,6 +456,26 @@ def database(url=None):
     migrate_correction_identity(engine)
     migrate_stations(engine)
     clean_existing_station_data(engine)
+    with engine.begin() as connection:
+        claimed = connection.execute(text(
+            "INSERT INTO completed_data_migrations (name) VALUES ('work-order-recovery-drafts-v1') "
+            "ON CONFLICT (name) DO NOTHING RETURNING name"
+        )).first()
+        if claimed:
+            # Earlier orders have no draft snapshot. Prefer the first server save
+            # over a field device's clock. Older imports may only have a start date.
+            connection.execute(text("""
+                INSERT INTO work_order_recovery_drafts (item_id, report_id)
+                SELECT i.id, r.id FROM work_order_items i JOIN reports r ON r.charger_id = i.target
+                LEFT JOIN (
+                    SELECT target, MIN(created) AS first_saved FROM audit
+                    WHERE action = 'report.draft' GROUP BY target
+                ) saved ON saved.target = r.id
+                WHERE i.kind = 'preventive' AND i.state IN ('closed', 'invalid')
+                  AND r.status = 'draft' AND COALESCE(saved.first_saved, r.started) <= i.resolved_at
+                  AND NOT EXISTS (SELECT 1 FROM report_corrections c WHERE c.id = r.id)
+                ON CONFLICT (item_id, report_id) DO NOTHING
+            """))
     with engine.begin() as connection:
         connection.execute(
             text("INSERT INTO account_admin_lock (id) VALUES (1) ON CONFLICT (id) DO NOTHING")

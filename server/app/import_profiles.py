@@ -29,6 +29,7 @@ STATIONS_COLUMNS = [
 ]
 FIELDS = [
     "external_id",
+    "operator",
     "manufacturer",
     "model",
     "serial",
@@ -43,6 +44,10 @@ FIELDS = [
     "power_limit",
     "connectors",
 ]
+
+
+def is_operator_header(label):
+    return str(label).strip().casefold() in {"operator", "current operator", "operador", "operador atual"}
 
 
 def is_contract_notes(key):
@@ -102,6 +107,8 @@ def recommended(header, sheet, row):
     for label in header:
         if is_contract_notes(label):
             columns["contract_notes"] = label
+        elif is_operator_header(label):
+            columns["operator"] = label
     return {
         "profile": STATIONS_PROFILE,
         "sheet": sheet,

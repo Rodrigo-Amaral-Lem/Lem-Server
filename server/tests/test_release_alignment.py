@@ -20,7 +20,7 @@ def test_app_and_server_release_are_aligned(monkeypatch):
     assert f"image: lem-api:{version}" in (root / "deploy/compose.yml").read_text()
     assert f'setApplicationVersion("{version}")' in (app_root / "app/src/main.cpp").read_text()
     assert f'QT_ANDROID_VERSION_NAME "{version}"' in cmake
-    assert 'QT_ANDROID_VERSION_CODE 183' in cmake
+    assert 'QT_ANDROID_VERSION_CODE 185' in cmake
     for name in [".env.example", "install-ubuntu.sh"]:
         assert f"LEM_LATEST_CLIENT_VERSION={version}" in (root / "deploy" / name).read_text()
         assert f"LEM_MIN_CLIENT_VERSION={MINIMUM_CLIENT}" in (root / "deploy" / name).read_text()

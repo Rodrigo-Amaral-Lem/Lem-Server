@@ -203,3 +203,7 @@ minimum remains 0.2.6. Startup creates the contract membership notes table. If a
 captured **Notas** as raw metadata, startup recovers text with a recorded membership of origin
 and removes it from the live shared station fields. For text retained only in a shared PCVE
 record, reimport the source workbook into the intended contract.
+
+### Upgrade to 0.5.3
+
+Update the API and latest-client setting before installing client 0.5.3. Startup adds work-order planning, notification, cancellation and draft-recovery tables. On upgrade, the database uses the first recorded server save to associate ordinary drafts with visits that were resolved later. Legacy records without an audit entry use the stored start time. The minimum client remains 0.2.6. Existing contracts, full-contract assignments, reports and evidence keep their identifiers.

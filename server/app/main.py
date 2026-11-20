@@ -65,7 +65,7 @@ from .maintenance_migration import upgrade_checkpoint, persist_upgrade
 from .exports import write_bundle, file_chunks, MissingEvidence
 from .report_naming import EVIDENCE_EXTENSIONS, content_disposition, evidence_stem, report_identifier
 from .contract_trash import RETENTION, utc_now, purge_expired
-from . import corrections
+from . import corrections, work_orders
 
 SESSION_LIFETIME = timedelta(days=365)
 from .evidence_cache import EvidenceCache, EvidenceResponse
@@ -313,6 +313,7 @@ def create_app(url=None, bootstrap=True):
         if changing_password:
             begin_credential_write(db)
         db.info["client_platform"] = request.headers.get("X-Lem-Client-Platform", "")
+        db.info["order_catalogue"] = request.headers.get("X-Lem-Work-Orders") == "1"
         token = db.get(SessionToken, digest(auth.credentials))
         if not token or token.expires <= now():
             raise HTTPException(401, "Sessão expirada; entre novamente")
@@ -346,12 +347,17 @@ def create_app(url=None, bootstrap=True):
         return user
 
     # Contract scope is checked independently from report ownership. Administrators see all contracts.
-    def accessible(db, user, contract_id, write=False):
+    def accessible(db, user, contract_id, write=False, *, target=None, scoped_listing=False, working=False, report_id=None):
         c = db.scalar(select(Contract).where(Contract.id == contract_id).with_for_update(read=not write))
         if not c:
             raise HTTPException(404, "Contrato inexistente")
         if user.role != "admin" and not db.get(Assignment, (user.id, c.id)):
-            raise HTTPException(403, "Contrato não atribuído")
+            allowed = work_orders.assigned_items(user.id, writable=working, report_id=report_id)
+            query = select(Charger.id).where(Charger.contract_id == c.id, Charger.id.in_(allowed))
+            if target:
+                query = query.where(Charger.id == target)
+            if (not target and not scoped_listing) or db.scalar(query.limit(1)) is None:
+                raise HTTPException(403, "Contrato ou tarefa não atribuídos para esta operação.")
         # Read the marker AFTER obtaining the lock, with a fresh statement
         # snapshot if we waited for a concurrent trash transaction to commit.
         if db.get(ContractTrash, c.id):
@@ -368,11 +374,11 @@ def create_app(url=None, bootstrap=True):
             tombstone = db.get(DeletedReport, rid)
             if tombstone:
                 charger = db.get(Charger, tombstone.charger_id)
-                accessible(db, user, charger.contract_id)
+                accessible(db, user, charger.contract_id, target=charger.id, report_id=rid)
                 raise HTTPException(410, corrections.replaced_detail(db, rid))
             raise HTTPException(404, "Report inexistente")
         charger = db.get(Charger, r.charger_id)
-        accessible(db, user, charger.contract_id)
+        accessible(db, user, charger.contract_id, target=charger.id, report_id=rid, working=write)
         corrections.gate(db, user, rid)
         if write and r.owner_id != user.id:
             raise HTTPException(
@@ -586,12 +592,18 @@ def create_app(url=None, bootstrap=True):
     def contracts(u=Depends(user_dep), db=Depends(db_dep)):
         query = select(Contract).where(~Contract.id.in_(select(ContractTrash.contract_id))).order_by(Contract.year.desc(), Contract.company, Contract.semester)
         if u.role != "admin":
-            query = query.join(Assignment, Assignment.contract_id == Contract.id).where(
-                Assignment.user_id == u.id
-            )
+            full = set(db.scalars(select(Assignment.contract_id).where(Assignment.user_id == u.id)))
+            scoped_targets = {}
+            if db.info.get("order_catalogue"):
+                for cid, target in db.execute(select(Charger.contract_id, Charger.id).where(
+                        Charger.id.in_(work_orders.assigned_items(u.id)), ~Charger.contract_id.in_(full))
+                        .order_by(Charger.id)):
+                    scoped_targets.setdefault(cid, []).append(target)
+            query = query.where(Contract.id.in_(full | scoped_targets.keys()))
         return [
             {
                 "id": c.id,
+                **({"order_only": True, "order_targets": scoped_targets[c.id]} if u.role != "admin" and c.id not in full else {}),
                 "company": c.company,
                 "year": c.year,
                 "semester": c.semester,
@@ -610,7 +622,7 @@ def create_app(url=None, bootstrap=True):
 
     @app.get("/api/contracts/{cid}/presentation")
     def current_presentation(cid: str, response: Response, u=Depends(user_dep), db=Depends(db_dep)):
-        accessible(db, u, cid)
+        accessible(db, u, cid, scoped_listing=db.info.get("order_catalogue"))
         response.headers["Cache-Control"] = "no-store"
         return contract_presentation(db, cid)
 
@@ -709,7 +721,14 @@ def create_app(url=None, bootstrap=True):
     # Return lightweight report summaries in bulk; avoid loading payloads/photos per charger.
     @app.get("/api/contracts/{cid}/chargers")
     def chargers(cid: str, u=Depends(user_dep), db=Depends(db_dep)):
-        accessible(db, u, cid)
+        accessible(db, u, cid, scoped_listing=db.info.get("order_catalogue"))
+        limited = u.role != "admin" and not db.get(Assignment, (u.id, cid))
+        members = select(Charger).where(Charger.contract_id == cid, attached_charger())
+        visible = Charger.contract_id == cid
+        if limited:
+            granted = work_orders.assigned_items(u.id)
+            members = members.where(Charger.id.in_(granted))
+            visible = visible & Charger.id.in_(granted)
         # Bulk metadata queries; no answer payloads, templates or photo BLOBs.
         summaries = {}
         rows = db.execute(
@@ -720,7 +739,7 @@ def create_app(url=None, bootstrap=True):
                    Report.snapshot["contract"]["name"].as_string().label("report_contract"))
             .join(Charger, Charger.id == Report.charger_id)
             .outerjoin(ReportCorrection, ReportCorrection.id == Report.id)
-            .where(Charger.contract_id == cid)
+            .where(visible, Charger.id.in_(work_orders.assigned_items(u.id, report_id=Report.id)) if limited else True)
             .order_by(Report.updated.desc())
         )
         for row in rows:
@@ -749,7 +768,7 @@ def create_app(url=None, bootstrap=True):
             .join(Charger, Charger.id == DeletedReport.charger_id)
             .outerjoin(ReportCorrection, (ReportCorrection.source_id == DeletedReport.id) &
                        (ReportCorrection.state == "committed"))
-            .where(Charger.contract_id == cid)
+            .where(visible)
         ):
             removed.setdefault(row.charger_id, []).append(row.id)
             if row.replacement_id:
@@ -768,8 +787,7 @@ def create_app(url=None, bootstrap=True):
                 "report_replacements": {rid: replacements[rid] for rid in removed.get(c.id, []) if rid in replacements},
             }
             for c in db.scalars(
-                select(Charger).options(joinedload(Charger.station), joinedload(Charger.contract_note))
-                .where(Charger.contract_id == cid, attached_charger()).order_by(Charger.external_id)
+                members.options(joinedload(Charger.station), joinedload(Charger.contract_note)).order_by(Charger.external_id)
             )
         ]
 
@@ -790,7 +808,7 @@ def create_app(url=None, bootstrap=True):
 
     @app.get("/api/contracts/{cid}/chargers/{charger_id}/notes")
     def read_notes(cid: str, charger_id: str, u=Depends(user_dep), db=Depends(db_dep)):
-        accessible(db, u, cid)
+        accessible(db, u, cid, target=charger_id)
         return notes_response(*membership_notes(db, cid, charger_id))
 
     @app.put("/api/contracts/{cid}/chargers/{charger_id}/notes")
@@ -1176,12 +1194,13 @@ def create_app(url=None, bootstrap=True):
         charger = db.get(Charger, body.charger_id)
         if not charger:
             raise HTTPException(404, "Carregador inexistente")
-        contract = accessible(db, u, charger.contract_id)
-        # Shared-identity mutations use catalogue -> membership lock order,
-        # including contract membership changes.
-        if body.status == "closed":
+        # Claiming a planned visit and accepting its closure serialize with planning
+        # and imports. Acquire the catalogue before the contract and its membership.
+        full_grant = u.role == "admin" or db.scalar(select(Assignment.user_id).where(
+            Assignment.user_id == u.id, Assignment.contract_id == charger.contract_id))
+        if body.base_revision == 0 or body.status == "closed" or not full_grant:
             lock_catalogue(db)
-        # Always lock the contract before its charger, matching trash/purge.
+        contract = accessible(db, u, charger.contract_id, target=charger.id, working=True)
         charger = db.scalar(select(Charger).where(Charger.id == body.charger_id).with_for_update())
         if db.get(DeletedReport, rid):
             raise HTTPException(410, corrections.replaced_detail(db, rid))
@@ -1204,6 +1223,12 @@ def create_app(url=None, bootstrap=True):
             if r.status == "closed":
                 raise HTTPException(409, "Report fechado é imutável; crie nova intervenção")
         else:
+            # One field draft per planned visit. Keep ordinary unplanned contract
+            # work independent. Exact retries still use the existing report above.
+            planned = db.scalar(select(work_orders.WorkItem.id).where(work_orders.WorkItem.target == charger.id,
+                                work_orders.WorkItem.kind == "preventive", work_orders.WorkItem.state == "pending"))
+            if planned and db.scalar(work_orders.ordinary_drafts().where(Report.charger_id == charger.id).limit(1)):
+                raise HTTPException(409, "Este ID já tem um rascunho. Consulte o proprietário na ordem. A cópia local foi conservada.")
             if db.get(DetachedCharger, charger.id):
                 raise HTTPException(409, "Este PCVE foi retirado do contrato. O rascunho local foi conservado.")
             legacy_closed = body.checklist_version == 6 and (body.status == "closed" or body.frozen_history)
@@ -1281,6 +1306,8 @@ def create_app(url=None, bootstrap=True):
         )
         if result.rowcount != 1:
             raise HTTPException(409, "Conflito de revisão; atualize antes de editar")
+        if body.status == "closed":
+            work_orders.accept_closure(db, charger, rid, u, updated)
         audit(db, u, "report." + body.status, rid)
         db.commit()
         db.expire_all()
@@ -1307,6 +1334,9 @@ def create_app(url=None, bootstrap=True):
         corrections.lock_report_users(db, rid)
         report = report_access(db, u, rid)
         report = corrections.commit(db, u, report, body, validate_report_payload, TEMPLATE)
+        correction = db.get(ReportCorrection, report.id)
+        db.execute(update(work_orders.WorkItem).where(work_orders.WorkItem.report_id == correction.source_id)
+                   .values(report_id=report.id))
         audit(db, u, "report.correction.commit", report.id)
         db.commit()
         return report_json(db, report)
@@ -1320,6 +1350,7 @@ def create_app(url=None, bootstrap=True):
             select(User).where(User.role.in_(("admin", "tech"))).where(
                 (User.role == "admin")
                 | User.id.in_(select(Assignment.user_id).where(Assignment.contract_id == cid))
+                | work_orders.eligible_owner(User.id, r.charger_id)
             )
         )
         return [
@@ -1354,7 +1385,7 @@ def create_app(url=None, bootstrap=True):
             raise HTTPException(409, "Só pode transferir rascunhos")
         if r.revision != body.base_revision:
             raise HTTPException(409, "Report alterado; consulte a versão atual antes de transferir")
-        accessible(db, target, db.get(Charger, r.charger_id).contract_id)
+        accessible(db, target, db.get(Charger, r.charger_id).contract_id, target=r.charger_id, working=True)
         if r.owner_id == target.id:
             return report_json(db, r)
         old = r.owner_id
@@ -1392,7 +1423,7 @@ def create_app(url=None, bootstrap=True):
             raise HTTPException(404, "Report inexistente")
         # Contract -> charger -> report matches retention and console mutations.
         charger = db.get(Charger, r.charger_id)
-        accessible(db, u, charger.contract_id)
+        accessible(db, u, charger.contract_id, target=charger.id, working=True)
         charger = corrections.lock_charger(db, r.charger_id)
         r = db.scalar(
             select(Report)
@@ -1745,4 +1776,5 @@ def create_app(url=None, bootstrap=True):
             db.close()
         return ExportFileResponse(spool, size, doc["identifier"])
 
+    work_orders.register(app, db_dep, user_dep, admin, audit)
     return app
