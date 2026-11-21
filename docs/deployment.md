@@ -58,7 +58,7 @@ runs the API as user `lem`.
 | `LEM_DOMAIN` | Proxy hostname; default `lem.rodrod.pt` |
 | `POSTGRES_PASSWORD` | Required database password; installer generates URL-safe hex |
 | `ADMIN_EMAIL`, `ADMIN_NAME`, `ADMIN_PASSWORD` | Initial account only; password must have at least 12 characters |
-| `LEM_MIN_CLIENT_VERSION`, `LEM_LATEST_CLIENT_VERSION` | Admitted version interval; defaults `0.2.5` / `0.2.5` |
+| `LEM_MIN_CLIENT_VERSION`, `LEM_LATEST_CLIENT_VERSION` | Admitted version interval, defaults `0.5.5` / `0.6.0` |
 | `LEM_UPDATE_URL` | Optional HTTPS update/download instructions URL |
 | `LEM_EXPORT_CONCURRENCY`, `LEM_IMAGE_CONCURRENCY` | API admission slots; defaults 2/1, capped at 4/2 |
 | `LEM_DOWNLOAD_CONCURRENCY` | Simultaneous original-evidence responses per worker; default 8, capped at 16 |
@@ -211,3 +211,7 @@ Update the API and latest-client setting before installing client 0.5.3. Startup
 ### Upgrade to 0.5.4
 
 Coordinate the server and device update. Set both the minimum and latest compatible client to 0.5.4. Earlier clients omit the originating work item and can attribute a delayed report to a different visit. They receive an upgrade explanation at login and on authenticated requests. Preserve the existing application profile during installation so field staff can resume or recover pending edits.
+
+### Upgrade to 0.6.0
+
+Update the server and its configuration first. The deployment defaults admit clients from 0.5.5 to 0.6.0. A 0.5.5 client can sign in and receives the update notice. A 0.5.4 or earlier client receives the upgrade explanation at login and on authenticated requests. Startup creates the tables for corrective contracts, PCVE coverage, interventions and cancelled-order retention. Install Android code 188 or desktop 0.6.0 in place to preserve local reports.

@@ -20,6 +20,9 @@ def component(value, fallback, maximum):
 def report_identifier(report):
     snapshot = report.get("snapshot") or {}
     charger = component((snapshot.get("charger") or {}).get("external_id"), "Carregador", 72)
+    reference = (snapshot.get("intervention") or {}).get("reference")
+    if reference:
+        return f"{charger}_{component(reference, 'Intervenção', 112)}"
     contract = component((snapshot.get("contract") or {}).get("name"), "Contrato", 112)
     return f"{charger}_{contract}"
 

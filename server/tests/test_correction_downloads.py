@@ -39,7 +39,7 @@ def technician(setup):
     assert c.put(f'/api/contracts/{contract["id"]}/users/{created.json()["id"]}', headers=h).status_code == 200
     login = c.post('/api/login', json={'email': account['email'], 'password': account['password']})
     assert login.status_code == 200, login.text
-    return {'Authorization': 'Bearer '+login.json()['token'], 'X-Lem-Client-Version': '0.5.4'}
+    return {'Authorization': 'Bearer '+login.json()['token'], 'X-Lem-Client-Version': '0.5.5'}
 
 
 @pytest.fixture
@@ -109,7 +109,7 @@ def test_sync_correction_while_original_downloads_are_held(correction_case, tech
     photo = original['photos'][0]
     path = f'/api/reports/{original["id"]}/photos/{photo["id"]}'
     expected = c.get(path, headers=h).content
-    headers = {**h, 'X-Lem-Client-Version': '0.5.4'}
+    headers = {**h, 'X-Lem-Client-Version': '0.5.5'}
     engine = app.state.factory.kw['bind']
 
     with held_download_server(app, devices) as (url, entered, release):
@@ -182,7 +182,7 @@ def test_slow_export_render_does_not_block_correction(correction_case, monkeypat
 
     monkeypatch.setattr(renderer, 'build_pdf', slow_build)
     with held_download_server(app, 0) as (url, _, _):
-        headers = {**h, 'X-Lem-Client-Version': '0.5.4'}
+        headers = {**h, 'X-Lem-Client-Version': '0.5.5'}
         with httpx.Client(base_url=url, headers=headers, trust_env=False, timeout=8) as admin:
             with ThreadPoolExecutor(max_workers=1) as pool:
                 exporting = pool.submit(admin.get, f'/api/reports/{original["id"]}/{kind}')
@@ -294,7 +294,7 @@ def test_cold_cache_waiters_do_not_block_metadata_or_staging(correction_case, te
             try:
                 assert loading.wait(10)
                 assert app.state.factory.kw['bind'].pool.checkedout() == 0
-                with httpx.Client(base_url=url, headers={**h, 'X-Lem-Client-Version': '0.5.4'},
+                with httpx.Client(base_url=url, headers={**h, 'X-Lem-Client-Version': '0.5.5'},
                                   trust_env=False, timeout=5) as admin:
                     got = admin.get(f'/api/reports/{working["id"]}')
                     assert got.status_code == 200, got.text

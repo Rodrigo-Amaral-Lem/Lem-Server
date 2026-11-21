@@ -18,7 +18,7 @@ services:
       timeout: 5s
       retries: 10
   api:
-    image: lem-api:0.5.4
+    image: lem-api:0.6.0
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -31,8 +31,8 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@lem.pt}
       ADMIN_NAME: ${ADMIN_NAME:-Administrador}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Defina ADMIN_PASSWORD em .env}
-      LEM_MIN_CLIENT_VERSION: ${LEM_MIN_CLIENT_VERSION:-0.5.4}
-      LEM_LATEST_CLIENT_VERSION: ${LEM_LATEST_CLIENT_VERSION:-0.5.4}
+      LEM_MIN_CLIENT_VERSION: ${LEM_MIN_CLIENT_VERSION:-0.5.5}
+      LEM_LATEST_CLIENT_VERSION: ${LEM_LATEST_CLIENT_VERSION:-0.6.0}
       LEM_UPDATE_URL: ${LEM_UPDATE_URL:-}
       LEM_EXPORT_CONCURRENCY: ${LEM_EXPORT_CONCURRENCY:-2}
       LEM_IMAGE_CONCURRENCY: ${LEM_IMAGE_CONCURRENCY:-1}

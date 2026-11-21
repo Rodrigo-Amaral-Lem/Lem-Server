@@ -10,5 +10,7 @@
   {"name":"legacy-no-end", "report":{"status":"closed","snapshot":{"charger":{"external_id":"EV-07"},"contract":{"name":"TRE"}}},"expected":"EV-07_TRE"},
   {"name":"invalid-time", "report":{"status":"closed","finished":"not-a-date","snapshot":{"charger":{"external_id":"EV-08"},"contract":{"name":"TRE"}}},"expected":"EV-08_TRE"},
   {"name":"timezone-required", "report":{"status":"closed","finished":"2026-11-16T17:35:08","snapshot":{"charger":{"external_id":"EV-09"},"contract":{"name":"TRE"}}},"expected":"EV-09_TRE"},
-  {"name":"missing-context", "report":{"status":"closed","finished":"2026-11-16T17:35:08Z"},"expected":"Carregador_Contrato"}
+  {"name":"missing-context", "report":{"status":"closed","finished":"2026-11-16T17:35:08Z"},"expected":"Carregador_Contrato"},
+  {"name":"covered-corrective","report":{"snapshot":{"charger":{"external_id":"Âncora North"},"contract":{"name":"2026_Âncora_Assistência"},"intervention":{"kind":"corrective","reference":"COR-000017"}}},"expected":"Âncora-North_COR-000017"},
+  {"name":"commissioning-without-contract","report":{"snapshot":{"charger":{"external_id":"Âncora North"},"contract":null,"intervention":{"kind":"commissioning","reference":"COM-000018"}}},"expected":"Âncora-North_COM-000018"}
 ]

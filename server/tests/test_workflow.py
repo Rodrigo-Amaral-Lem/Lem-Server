@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.main import create_app, TEMPLATE
+from app.compatibility import VERSION
 from app.models import Photo, Report
 from app.pdf_report import build_pdf
 
@@ -20,7 +21,7 @@ from app.pdf_report import build_pdf
 def setup(tmp_path, monkeypatch):
     monkeypatch.setenv("ADMIN_PASSWORD", "StrongPassword123!")
     app = create_app("sqlite:///" + str(tmp_path / "test.db"))
-    c = TestClient(app, headers={"X-Lem-Client-Version": "0.5.4"})
+    c = TestClient(app, headers={"X-Lem-Client-Version": VERSION})
     token = c.post(
         "/api/login", json={"email": "admin@lem.pt", "password": "StrongPassword123!"}
     ).json()["token"]

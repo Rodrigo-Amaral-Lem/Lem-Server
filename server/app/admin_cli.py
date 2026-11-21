@@ -29,6 +29,7 @@ from .models import (
     AccountAdminLock,
     SessionToken,
     Contract,
+    Intervention,
     ContractTrash,
     Assignment,
     Charger,
@@ -91,10 +92,12 @@ def public_user(db, u):
     )
 
 
-def active_contract(db, cid, allow_trash=False, write=True):
+def active_contract(db, cid, allow_trash=False, write=True, *, report_scope=False):
     c = db.scalar(select(Contract).where(Contract.id == cid).with_for_update(read=not write))
     if c is None:
         raise ValueError("Contrato inexistente")
+    if not report_scope and db.get(Intervention, cid):
+        raise ValueError("Utilize o menu da intervenção para gerir esta tarefa.")
     if not allow_trash and db.get(ContractTrash, cid):
         raise ValueError("Contrato na área de recuperação; recupere-o antes de o alterar")
     return c
@@ -104,7 +107,7 @@ def locked_report(db, rid):
     lock_report_users(db, rid)
     r = need(db, Report, rid)
     charger = need(db, Charger, r.charger_id)
-    active_contract(db, charger.contract_id, allow_trash=True)
+    active_contract(db, charger.contract_id, allow_trash=True, report_scope=True)
     lock_charger(db, charger.id)
     r = db.scalar(
         select(Report)
@@ -300,6 +303,7 @@ def contract_commands(db, args, factory):
         rows = db.execute(
             select(Contract, ContractTrash)
             .outerjoin(ContractTrash, ContractTrash.contract_id == Contract.id)
+            .where(~Contract.id.in_(select(Intervention.id)))
             .order_by(Contract.name)
         )
         return [
@@ -405,9 +409,14 @@ def report_commands(db, args):
             raise ValueError("Cópia de correção em curso: cancele a cópia antes de transferir a propriedade")
         cid = need(db, Charger, r.charger_id).contract_id
         if owner.role == "tech" and not db.get(Assignment, (owner.id, cid)):
-            if not args.assign_access:
+            if db.get(Intervention, cid):
+                from .work_orders import assigned_items
+                if r.charger_id not in db.scalars(assigned_items(owner.id, writable=True)):
+                    raise ValueError("Partilhe a intervenção com este técnico antes de transferir o relatório.")
+            elif not args.assign_access:
                 raise ValueError("Técnico sem acesso ao contrato; acrescente --assign-access")
-            db.add(Assignment(user_id=owner.id, contract_id=cid))
+            else:
+                db.add(Assignment(user_id=owner.id, contract_id=cid))
         old = r.owner_id
         if old != owner.id:
             r.owner_id = owner.id

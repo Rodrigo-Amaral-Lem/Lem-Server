@@ -199,7 +199,9 @@ lost acknowledgements and detachment. It uses generated workbooks and disposable
 
 `server/tests/test_work_orders.py` checks planning and completion, registration of impediments, mobile receipts and Lisbon civil-time boundaries, independent station operator and customer, scoped grants and competing administrators. With the disposable PostgreSQL fixture configured the same lifecycle and competing-plan tests also exercise real database locks.
 
-The work-order suite exercises simultaneous draft claims, cancellation retries, removal of scoped grants and reusing released IDs in another order on SQLite and PostgreSQL.
+The work-order suite exercises simultaneous draft claims, cancellation retries, removal of scoped grants and reusing released IDs in another order on SQLite and PostgreSQL. It crosses the Lisbon daylight-saving change to check the exact 24-hour cutoff, concurrent cleanup, repeat creation requests, monthly codes and recovery of a draft with its attachment.
+
+`server/tests/test_interventions.py` exercises dated XLSX coverage, automatic and explicit contract selection, individual grants, technician-created commissioning, mixed work-order closure, export identity and concurrent report creation. Run it with the same disposable PostgreSQL fixture to check row locking in addition to SQLite.
 
 ## Report, visit and import integrity
 

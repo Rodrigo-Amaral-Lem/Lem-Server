@@ -14,6 +14,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.schema import CreateSchema, DropSchema
 
 from app.main import create_app
+from app.compatibility import VERSION
 import test_report_styles as cases
 
 
@@ -34,7 +35,7 @@ def postgres_setup(monkeypatch):
     app = None
     try:
         app = create_app(scoped.render_as_string(hide_password=False))
-        with TestClient(app, headers={'X-Lem-Client-Version': '0.5.4'}) as client:
+        with TestClient(app, headers={'X-Lem-Client-Version': VERSION}) as client:
             token = client.post('/api/login', json={'email': 'admin@lem.pt', 'password': 'StrongPassword123!'}).json()['token']
             headers = {'Authorization': 'Bearer ' + token}
             contract = client.post('/api/contracts', headers=headers,

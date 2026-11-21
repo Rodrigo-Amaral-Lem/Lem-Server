@@ -11,9 +11,9 @@ import os
 import re
 from urllib.parse import urlparse
 
-VERSION = "0.5.4"
-# Order-scoped first uploads must carry their originating visit.
-MINIMUM_CLIENT = "0.5.4"
+VERSION = "0.6.0"
+# Earlier clients interpret corrective targets as preventive memberships in mixed orders.
+MINIMUM_CLIENT = "0.5.5"
 HEADER = "X-Lem-Client-Version"
 
 
@@ -35,12 +35,13 @@ class ClientPolicy:
             raise ValueError(
                 "Invalid Lem client policy: require minimum <= latest (major.minor.patch)"
             )
-        # A stale deployment .env must not admit clients that cannot represent
-        # the originating visit on delayed uploads. Preserve stricter administrator policy values.
+        # A stale deployment can still name a release that predates mixed work orders.
+        # Keep valid operator limits. An obsolete ceiling below the protocol floor
+        # cannot admit any supported client, so use the shipped release instead.
         if low < version_tuple(MINIMUM_CLIENT):
             self.minimum = MINIMUM_CLIENT
         if high < version_tuple(self.minimum):
-            self.latest = self.minimum
+            self.latest = VERSION
         if self.update_url:
             url = urlparse(self.update_url)
             if url.scheme != "https" or not url.netloc or url.username or url.password:

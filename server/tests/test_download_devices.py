@@ -35,7 +35,7 @@ def test_four_devices_share_original_abort_resume_and_release_resources(setup):
     thread=threading.Thread(target=lambda:server.run(sockets=[listener]),daemon=True)
     thread.start()
     url=f'http://127.0.0.1:{listener.getsockname()[1]}'
-    headers={**h,'X-Lem-Client-Version':'0.5.4'}
+    headers={**h,'X-Lem-Client-Version':'0.5.5'}
     barrier=threading.Barrier(4)
     def device(n):
         with httpx.Client(base_url=url,headers=headers,trust_env=False,timeout=20) as client:

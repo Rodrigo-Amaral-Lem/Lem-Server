@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-only
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
 from test_postgres_branding import postgres_setup
 from app import work_orders
+from app.work_order_retention import cancellation_cutoff, purge_cancelled_orders
 from test_workflow import TEMPLATE, add_signature, answers, setup, upload, xlsx
 
 
@@ -199,6 +200,81 @@ def test_cancel_releases_scoped_memberships_and_competing_draft_claims(backend, 
     draft, = current["items"][0]["drafts"]
     assert draft["owner_id"] in (first, second) and draft["owner_name"]
     assert client.get("/api/reports/" + draft["id"], headers=rui).status_code == 200
+
+
+@pytest.mark.parametrize("backend", ["setup", "postgres_setup"])
+def test_cancelled_order_expires_after_24_elapsed_hours(backend, request, monkeypatch):
+    from sqlalchemy import select
+    from app.models import (DeletedWorkOrder, ExpiredVisitDraft, NoticeReceipt, WorkAssignee, WorkItem,
+                            WorkItemDraft, WorkNotice, WorkOrder, WorkOrderCancellation)
+
+    client, admin, contract, app = request.getfixturevalue(backend)
+    # This interval crosses the spring change of Lisbon's UTC offset.
+    cancelled_at = datetime(2027, 3, 27, 12, tzinfo=timezone.utc)
+    clock = cancelled_at
+    monkeypatch.setattr(work_orders, "now", lambda: clock.isoformat())
+    monkeypatch.setattr(work_orders, "lisbon_now", lambda: clock.astimezone(ZoneInfo("Europe/Lisbon")))
+    monkeypatch.setattr(work_orders, "cancellation_cutoff", lambda: cancellation_cutoff(clock))
+    uid, tech = account(client, admin, "visita")
+    client.put(f"/api/contracts/{contract['id']}/users/{uid}", headers=admin).raise_for_status()
+    upload(client, admin, contract["id"], True).raise_for_status()
+    a, b = [r["target"] for r in client.get("/api/work-order-candidates", headers=admin).json()]
+    def plan(oid, target, day):
+        return client.put("/api/work-orders/" + oid, headers=admin, json=dict(id=oid, revision=0,
+                          start=day, due=day, technicians=[uid], targets=[target]))
+    def history():
+        result = client.get("/api/work-orders?include_cancelled=true", headers=tech)
+        result.raise_for_status()
+        return {r["id"]: r for r in result.json()["orders"]}
+
+    first, kept = str(uuid4()), str(uuid4())
+    plan(first, a, "2027-03-30").raise_for_status()
+    plan(kept, b, "2027-03-27").raise_for_status()
+    origin = history()[first]["items"][0]["id"]
+    report = str(uuid4())
+    endpoint = "/api/reports/" + report
+    payload = dict(charger_id=a, work_item_id=origin, checklist_version=TEMPLATE["version"], base_revision=0,
+                   status="draft", payload={"answers":{}})
+    client.put(endpoint, headers=tech, json=payload).raise_for_status()
+    signature = add_signature(client, tech, report, {"answers": answers()})
+    path = "/api/work-orders/" + first + "/cancel"
+    client.put(path, headers=admin, json={"revision":1}).raise_for_status()
+    code = history()[first]["code"]
+    # Old installations may have remaining events and acknowledgements for a cancelled order.
+    event_id, device = str(uuid4()), str(uuid4())
+    with app.state.factory.begin() as db:
+        db.add(WorkNotice(id=event_id, order_id=first, user_id=uid, kind="invalid", message="Teste"))
+        db.flush()
+        db.add(NoticeReceipt(notice_id=event_id, device=device))
+    clock += timedelta(hours=24) - timedelta(microseconds=1)
+    assert first in history() and purge_cancelled_orders(app.state.factory, clock) == 0
+    assert client.put(path, headers=admin, json={"revision":1}).json()["cancelled_at"] == cancelled_at.isoformat()
+    clock += timedelta(microseconds=1)
+    assert set(history()) == {kept}
+    assert client.put(path, headers=admin, json={"revision":1}).status_code == 404
+    assert plan(first, a, "2027-03-30").status_code == 410
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert sum(pool.map(lambda _: purge_cancelled_orders(app.state.factory, clock), range(2))) == 1
+    with app.state.factory() as db:
+        assert db.get(WorkOrder, first) is None and db.get(WorkOrderCancellation, first) is None
+        assert db.get(WorkItem, origin) is None and db.get(WorkItemDraft, (origin, report)) is None
+        assert db.get(WorkAssignee, (first, uid)) is None and db.get(NoticeReceipt, (event_id, device)) is None
+        assert db.scalar(select(WorkNotice.id).where(WorkNotice.order_id == first)) is None
+        assert db.get(DeletedWorkOrder, first).code == code
+        assert db.get(ExpiredVisitDraft, report).item_id == origin
+    assert plan(first, a, "2027-03-30").status_code == 410
+    replacement = str(uuid4())
+    plan(replacement, a, "2027-03-28").raise_for_status()
+    current = history()[replacement]
+    assert current["code"] == "OT-202703-0003" and current["items"][0]["drafts"] == []
+    recovered = client.get(endpoint, headers=tech).json()
+    assert recovered["status"] == "draft" and recovered["work_item_id"] == origin and recovered["work_item_expired"]
+    photo = client.get(endpoint + "/photos/" + signature, headers=tech)
+    assert photo.is_success and photo.content.startswith(b"\x89PNG")
+    assert client.put(endpoint, headers=tech, json={**payload, "base_revision":1, "work_item_id":None}).status_code == 403
+    assert client.put(endpoint, headers=tech, json={**payload, "base_revision":1,
+                      "work_item_id":current["items"][0]["id"]}).status_code == 403
+    assert purge_cancelled_orders(app.state.factory, clock) == 0
 
 
 @pytest.mark.parametrize("backend", ["setup", "postgres_setup"])

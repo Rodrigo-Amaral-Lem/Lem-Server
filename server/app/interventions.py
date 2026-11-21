@@ -1,0 +1,251 @@
+# SPDX-License-Identifier: GPL-3.0-only
+"""Station interventions and dated commercial coverage, independent of preventive visits."""
+import calendar
+import hashlib
+import json
+from datetime import date
+from typing import Literal
+from uuid import UUID
+
+from fastapi import Depends, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import delete, func, select
+
+from .import_profiles import normalize_contract_notes
+from .importer import cell_text, workbook
+from .models import (Assignment, Charger, Contract, ContractChargerNote, CorrectiveContract, CorrectiveCoverage,
+                     Intervention, Report, ReportCorrection, Station, User, set_contract_notes)
+from .stations import lock_catalogue, stations_for_import
+from .work_orders import assigned_items, lisbon_now
+
+
+class NewIntervention(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["corrective", "commissioning"]
+    station_id: UUID
+    contract_id: UUID | None = None
+    technician: UUID | None = None
+    notes: str = Field(default="", max_length=32767)
+
+
+class Share(BaseModel):
+    technician: UUID | None
+    previous: UUID | None
+
+
+def coverage_for(station_id, day):
+    return (select(CorrectiveContract).join(CorrectiveCoverage)
+            .where(CorrectiveCoverage.station_id == station_id,
+                   CorrectiveContract.start <= day, CorrectiveContract.end >= day)
+            .order_by(CorrectiveContract.start.desc(), CorrectiveContract.name, CorrectiveContract.id))
+
+
+def spreadsheet_ids(data):
+    book = workbook(data, data_only=False)
+    try:
+        sheet = book.worksheets[0]
+        # Producers may omit or understate worksheet dimensions.
+        sheet.reset_dimensions()
+        rows = {}
+        for line, (cell,) in enumerate(sheet.iter_rows(max_col=1), 1):
+            if line > 100000:
+                raise HTTPException(422, "Máximo de 100000 linhas.")
+            if cell.value is None:
+                continue
+            value = cell_text(cell, identifier=True)
+            if not value:
+                continue
+            if cell.data_type in ("f", "e", "b", "d") or len(value) > 200:
+                raise HTTPException(422, f"Linha {line}: indique um ID de PCVE válido na coluna A.")
+            if value in rows:
+                raise HTTPException(422, f"Linha {line}: ID repetido (linha {rows[value]}).")
+            rows[value] = line
+        if not rows:
+            raise HTTPException(422, "A primeira folha precisa de pelo menos um ID na coluna A.")
+        return rows
+    finally:
+        book.close()
+
+
+def check_dates(start, end, today):
+    if start.year < today.year or end < start:
+        raise HTTPException(422, "O início deve pertencer ao ano atual ou posterior e o fim deve ser igual ou posterior ao início.")
+    anniversary = date.max
+    if start.year <= date.max.year - 2:
+        last_day = min(start.day, calendar.monthrange(start.year + 2, start.month)[1])
+        anniversary = start.replace(year=start.year + 2, day=last_day)
+    if end > anniversary:
+        raise HTTPException(422, "A duração máxima do contrato é de dois anos.")
+
+
+def contract_data(contract):
+    return {"id": contract.id, "name": contract.name, "company": contract.company,
+            "start": contract.start, "end": contract.end}
+
+
+def report_context(db, job, code):
+    coverage = db.get(CorrectiveContract, job.corrective_contract_id) if job.corrective_contract_id else None
+    return {"intervention": {"id": job.id, "kind": job.kind, "reference": code},
+            "contract": contract_data(coverage) if coverage else None}
+
+
+def require_preventive_scope(db, scope):
+    if db.get(Intervention, scope):
+        raise HTTPException(409, "Utilize o menu da intervenção para gerir esta tarefa.")
+
+
+def catalogue_jobs(db, scope_ids, user):
+    """Enrich only the authorized scopes, without loading answers or evidence."""
+    if not scope_ids:
+        return {}
+    query = (select(Intervention, Contract.name, Charger, CorrectiveContract, Assignment.user_id, ContractChargerNote)
+             .join(Contract, Contract.id == Intervention.id).join(Charger, Charger.id == Intervention.id)
+             .outerjoin(CorrectiveContract, CorrectiveContract.id == Intervention.corrective_contract_id)
+             .outerjoin(Assignment, Assignment.contract_id == Intervention.id)
+             .outerjoin(ContractChargerNote, ContractChargerNote.charger_id == Intervention.id)
+             .where(Intervention.id.in_(scope_ids)))
+    jobs = {}
+    for job, code, charger, coverage, technician, note in db.execute(query):
+        jobs[job.id] = {"id": job.id, "kind": job.kind, "reference": code, "created": job.created,
+                        "station_id": charger.station_id, "external_id": charger.external_id, "details": charger.details,
+                        "contract": contract_data(coverage) if coverage else None, "technician": technician,
+                        "notes": note.text if note else "", "notes_revision": note.revision if note else 0}
+    reports = (select(Report.charger_id, Report.id, Report.status)
+               .outerjoin(ReportCorrection, ReportCorrection.id == Report.id)
+               .where(Report.charger_id.in_(jobs), ReportCorrection.id.is_(None) | (ReportCorrection.state == "committed")))
+    if user.role != "admin":
+        direct = select(Assignment.contract_id).where(Assignment.user_id == user.id)
+        reports = reports.where(Report.charger_id.in_(direct) |
+                                Report.charger_id.in_(assigned_items(user.id, report_id=Report.id)))
+    for target, rid, status in db.execute(reports):
+        jobs[target].update(report_id=rid, status=status)
+    return jobs
+
+
+def technician_id(db, value):
+    if value is None:
+        return None
+    uid = str(value)
+    if not db.scalar(select(User.id).where(User.id == uid, User.role == "tech").with_for_update(read=True)):
+        raise HTTPException(422, "Selecione um técnico ativo.")
+    return uid
+
+
+def register(app, db_dep, user_dep, admin, audit, visible_stations, file_bytes):
+    @app.get("/api/corrective-contracts")
+    def contracts(station_id: UUID | None = None, u=Depends(admin), db=Depends(db_dep)):
+        if station_id:
+            query = coverage_for(str(station_id), lisbon_now().date().isoformat())
+        else:
+            query = select(CorrectiveContract).order_by(CorrectiveContract.start.desc(), CorrectiveContract.name)
+        return [contract_data(c) for c in db.scalars(query)]
+
+    @app.put("/api/corrective-contracts/{cid}")
+    def import_contract(cid: UUID, company: str = Form(max_length=120), name: str = Form(max_length=115),
+                        start: date = Form(), end: date = Form(), file: UploadFile = File(),
+                        u=Depends(admin), db=Depends(db_dep)):
+        company, name = company.strip(), name.strip()
+        if not name or not company:
+            raise HTTPException(422, "Indique o cliente e o nome do contrato.")
+        title = f"{start.year}_{company}_{name}"
+        if len(title) > 240:
+            raise HTTPException(422, "O nome completo do contrato excede 240 caracteres.")
+        rows = spreadsheet_ids(file_bytes(file))
+        lock_catalogue(db)
+        stations = stations_for_import(db, [{"external_id": value} for value in rows])
+        missing = next((value for value in rows if value not in stations), None)
+        if missing is not None:
+            raise HTTPException(422, f"Linha {rows[missing]}: o ID {missing} não existe na base de PCVEs.")
+        key = str(cid)
+        ids = {station.id for station in stations.values()}
+        previous = db.get(CorrectiveContract, key)
+        if previous:
+            members = set(db.scalars(select(CorrectiveCoverage.station_id).where(CorrectiveCoverage.contract_id == key)))
+            if (previous.name, previous.company, previous.start, previous.end, members) == (
+                    title, company, start.isoformat(), end.isoformat(), ids):
+                return {**contract_data(previous), "count": len(ids)}
+            raise HTTPException(409, "Este pedido já criou outro contrato. Atualize a lista.")
+        check_dates(start, end, lisbon_now().date())
+        if db.scalar(select(CorrectiveContract.id).where(CorrectiveContract.name == title)):
+            raise HTTPException(409, "Já existe um contrato de corretivas com este nome.")
+        contract = CorrectiveContract(id=key, company=company, name=title, start=start.isoformat(), end=end.isoformat())
+        db.add(contract)
+        db.flush()
+        db.add_all(CorrectiveCoverage(contract_id=key, station_id=sid) for sid in ids)
+        audit(db, u, "corrective-contract.create", key)
+        db.commit()
+        return {**contract_data(contract), "count": len(ids)}
+
+    @app.put("/api/interventions/{iid}")
+    def create(iid: UUID, body: NewIntervention, u=Depends(user_dep), db=Depends(db_dep)):
+        if u.role != "admin" and (body.kind != "commissioning" or body.technician or body.notes):
+            raise HTTPException(403, "A criação de corretivas e a atribuição a técnicos exigem um administrador.")
+        key = str(iid)
+        digest = hashlib.sha256(json.dumps(body.model_dump(mode="json", exclude_unset=True),
+                                          sort_keys=True).encode("utf-8")).hexdigest()
+        lock_catalogue(db)
+        previous = db.get(Intervention, key)
+        if previous:
+            if previous.created_by == u.id and previous.request_digest == digest:
+                return {"id": key, "reference": db.get(Contract, key).name}
+            raise HTTPException(409, "Identificador de intervenção já utilizado.")
+        station = db.scalar(visible_stations(u).where(Station.id == str(body.station_id)))
+        if station is None:
+            raise HTTPException(404, "PCVE indisponível.")
+        if db.get(Contract, key) or db.get(Charger, key):
+            raise HTTPException(409, "Identificador já utilizado.")
+        today = lisbon_now().date()
+        coverage = None
+        if body.kind == "commissioning":
+            if body.contract_id is not None:
+                raise HTTPException(422, "Um comissionamento não admite contrato.")
+        else:
+            eligible = coverage_for(station.id, today.isoformat())
+            if "contract_id" not in body.model_fields_set:
+                coverage = db.scalar(eligible.limit(1))
+            elif body.contract_id is not None:
+                coverage = db.scalar(eligible.where(CorrectiveContract.id == str(body.contract_id)))
+                if coverage is None:
+                    raise HTTPException(422, "O contrato não é válido hoje para este PCVE.")
+        try:
+            notes = normalize_contract_notes(body.notes)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        tech = technician_id(db, body.technician) if u.role == "admin" else u.id
+        sequence = db.scalar(select(func.count()).select_from(Intervention)) + 1
+        code = f"{'COR' if body.kind == 'corrective' else 'COM'}-{sequence:06d}"
+        scope = Contract(id=key, company=coverage.company if coverage else "", year=today.year,
+                         semester=1 if today.month <= 6 else 2, kind=body.kind, name=code)
+        db.add(scope)
+        db.flush()
+        charger = Charger(id=key, contract_id=key, station=station, external_id=station.external_id)
+        set_contract_notes(charger, notes)
+        db.add(charger)
+        db.add(Intervention(id=key, kind=body.kind, corrective_contract_id=coverage.id if coverage else None,
+                            created_by=u.id, request_digest=digest))
+        if tech:
+            db.add(Assignment(contract_id=key, user_id=tech))
+        audit(db, u, "intervention.create", key)
+        db.commit()
+        return {"id": key, "reference": code}
+
+    @app.put("/api/interventions/{iid}/share")
+    def share(iid: UUID, body: Share, u=Depends(admin), db=Depends(db_dep)):
+        key = str(iid)
+        lock_catalogue(db)
+        if not db.get(Intervention, key):
+            raise HTTPException(404, "Intervenção inexistente.")
+        tech = technician_id(db, body.technician)
+        current = db.scalar(select(Assignment.user_id).where(Assignment.contract_id == key))
+        if current != tech:
+            if current != (str(body.previous) if body.previous else None):
+                raise HTTPException(409, "A atribuição mudou. Atualize a intervenção.")
+            if current and db.scalar(select(Report.id).where(Report.charger_id == key,
+                                      Report.owner_id == current, Report.status == "draft").limit(1)):
+                raise HTTPException(409, "O técnico tem um rascunho. Transfira primeiro a propriedade do relatório.")
+            db.execute(delete(Assignment).where(Assignment.contract_id == key))
+            if tech:
+                db.add(Assignment(contract_id=key, user_id=tech))
+            audit(db, u, "intervention.share", key)
+            db.commit()
+        return {"id": key, "technician": tech}

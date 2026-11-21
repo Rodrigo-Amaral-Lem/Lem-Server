@@ -6,13 +6,14 @@ from zoneinfo import ZoneInfo
 
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, func, literal, select
+from sqlalchemy import case, delete, func, literal, select
 from sqlalchemy.orm import aliased, selectinload
 
 from .import_profiles import normalize_contract_notes
-from .models import (Charger, Contract, ContractTrash, NoticeReceipt, Photo, Report, ReportCorrection, User, WorkAssignee,
+from .models import (Charger, Contract, ContractTrash, CorrectiveContract, DeletedWorkOrder, ExpiredVisitDraft, Intervention, NoticeReceipt, Photo, Report, ReportCorrection, User, WorkAssignee,
                      WorkItem, WorkItemDraft, WorkNotice, WorkOrder, WorkOrderCancellation, attached_charger, now)
 from .stations import lock_catalogue
+from .work_order_retention import cancellation_cutoff
 
 
 def lisbon_now():
@@ -27,11 +28,13 @@ def has_started(order, today):
 def assigned_items(user_id, *, writable=False, report_id=None):
     query = (select(WorkItem.target).join(WorkAssignee, WorkAssignee.order_id == WorkItem.order_id)
              .join(WorkOrder, WorkOrder.id == WorkItem.order_id)
-             .where(WorkAssignee.user_id == user_id, WorkItem.kind == "preventive", WorkItem.state != "cancelled"))
+             .where(WorkAssignee.user_id == user_id, WorkItem.kind.in_(("preventive", "corrective")), WorkItem.state != "cancelled"))
     if report_id is not None:
         bindings = (select(WorkItemDraft.item_id).where(WorkItemDraft.report_id == report_id)
                     .correlate_except(WorkItemDraft))
         current = (WorkItem.state == "pending") & (~bindings.exists() | WorkItem.id.in_(bindings))
+        expired = select(ExpiredVisitDraft.report_id).where(ExpiredVisitDraft.report_id == report_id).correlate_except(ExpiredVisitDraft)
+        current = current & ~expired.exists()
     else:
         current = WorkItem.state == "pending"
     if writable:
@@ -67,7 +70,8 @@ def finish_if_ready(db, order, timestamp):
 
 
 def ordinary_drafts():
-    return select(Report.id).where(Report.status == "draft", ~Report.id.in_(select(ReportCorrection.id)))
+    return select(Report.id).where(Report.status == "draft", ~Report.id.in_(select(ReportCorrection.id)),
+                                   ~Report.id.in_(select(ExpiredVisitDraft.report_id)))
 
 
 def current_drafts(item):
@@ -79,7 +83,7 @@ def current_drafts(item):
 
 
 def pending_item(db, target):
-    return db.scalar(select(WorkItem).where(WorkItem.kind == "preventive",
+    return db.scalar(select(WorkItem).where(WorkItem.kind.in_(("preventive", "corrective")),
                      WorkItem.target == target, WorkItem.state == "pending"))
 
 
@@ -134,10 +138,16 @@ class Follow(BaseModel):
 
 def available(db):
     closed = select(Report.id).where(Report.charger_id == Charger.id, Report.status == "closed").exists()
-    planned = select(WorkItem.id).where(WorkItem.kind == "preventive", WorkItem.target == Charger.id,
+    planned = select(WorkItem.id).where(WorkItem.target == Charger.id,
                                         WorkItem.state == "pending").exists()
-    return (select(Charger.id, Charger.contract_id, Charger.station_id, Charger.external_id, Contract.name,
+    return (select(Charger.id, Charger.contract_id, Charger.station_id, Charger.external_id,
+                   case((Intervention.id.is_(None), Contract.name),
+                        else_=func.coalesce(CorrectiveContract.name, "Sem contrato")).label("name"),
+                   func.coalesce(Intervention.kind, "preventive").label("kind"), Contract.name.label("reference"),
                    Contract.company).join(Contract, Contract.id == Charger.contract_id)
+            .outerjoin(Intervention, Intervention.id == Charger.id)
+            .outerjoin(CorrectiveContract, CorrectiveContract.id == Intervention.corrective_contract_id)
+            .where(Intervention.id.is_(None) | (Intervention.kind == "corrective"))
             .where(attached_charger(), ~Contract.id.in_(select(ContractTrash.contract_id)), ~closed, ~planned)
             .order_by(Contract.name, Charger.external_id))
 
@@ -145,26 +155,32 @@ def available(db):
 def register(app, db_dep, user_dep, admin, audit):
     def order_for(db, oid, user):
         order = db.get(WorkOrder, str(oid))
-        if not order or (user.role != "admin" and not db.get(WorkAssignee, (order.id, user.id))):
+        cancelled = db.get(WorkOrderCancellation, str(oid)) if order else None
+        if (not order or (cancelled and cancelled.cancelled_at <= cancellation_cutoff())
+                or (user.role != "admin" and not db.get(WorkAssignee, (order.id, user.id)))):
             raise HTTPException(404, "Ordem de trabalho indisponível.")
         return order
 
     @app.get("/api/work-orders")
     def listing(include_cancelled: bool = False, u=Depends(user_dep), db=Depends(db_dep)):
-        query = select(WorkOrder).options(selectinload(WorkOrder.items)).order_by(WorkOrder.start.desc(), WorkOrder.code)
-        if not include_cancelled:
-            query = query.where(~WorkOrder.id.in_(select(WorkOrderCancellation.order_id)))
+        query = (select(WorkOrder, WorkOrderCancellation)
+                 .outerjoin(WorkOrderCancellation, WorkOrderCancellation.order_id == WorkOrder.id)
+                 .options(selectinload(WorkOrder.items)).order_by(WorkOrder.start.desc(), WorkOrder.code))
+        active = WorkOrderCancellation.order_id.is_(None)
+        query = query.where(active | (WorkOrderCancellation.cancelled_at > cancellation_cutoff()) if include_cancelled else active)
         if u.role != "admin":
             query = query.join(WorkAssignee).where(WorkAssignee.user_id == u.id)
-        orders = list(db.scalars(query))
+        rows = db.execute(query).all()
+        orders = [order for order, _ in rows]
         ids = [o.id for o in orders]
-        cancellations = {c.order_id: c for c in db.scalars(select(WorkOrderCancellation)
-                         .where(WorkOrderCancellation.order_id.in_(ids)))} if include_cancelled else {}
+        cancellations = {c.order_id: c for _, c in rows if c is not None}
         assignees = {}
         for oid, uid, name, role in db.execute(select(WorkAssignee.order_id, User.id, User.name, User.role)
                 .join(User, User.id == WorkAssignee.user_id).where(WorkAssignee.order_id.in_(ids))):
             assignees.setdefault(oid, []).append({"id": uid, "name": name, "role": role})
         targets = {i.target for o in orders for i in o.items}
+        references = dict(db.execute(select(Contract.id, Contract.name).where(Contract.id.in_(
+            {i.contract_id for o in orders for i in o.items if i.kind == "corrective"}))).all())
         chargers = {c.id: c for c in db.scalars(select(Charger).options(selectinload(Charger.contract_note)).where(Charger.id.in_(targets),
                     attached_charger(), ~Charger.contract_id.in_(select(ContractTrash.contract_id)))).unique()}
         pending = {i.target for o in orders for i in o.items if i.state == "pending" and i.target in chargers}
@@ -199,8 +215,10 @@ def register(app, db_dep, user_dep, admin, audit):
             for i in o.items:
                 c = chargers.get(i.target) if i.state != "cancelled" else None
                 rows.append(dict(id=i.id, target=i.target, kind=i.kind, contract_id=i.contract_id,
-                        contract=i.contract_name, client=i.client, external_id=i.external_id, details=c.details if c else {},
+                        contract=i.contract_name, reference=references.get(i.contract_id), client=i.client,
+                        external_id=i.external_id, details=c.details if c else {},
                         contract_notes=c.contract_note.text if c and c.contract_note else "",
+                        notes_revision=c.contract_note.revision if c and c.contract_note else 0,
                         available=(i.report_id in existing and i.contract_id not in trashed) if i.state == "closed" else c is not None,
                         report_removed=i.state == "closed" and i.report_id not in existing, station_id=i.station_id,
                         state=i.state, note=i.note, report_id=i.report_id, resolved_at=i.resolved_at,
@@ -214,7 +232,8 @@ def register(app, db_dep, user_dep, admin, audit):
 
     @app.get("/api/work-order-candidates")
     def candidates(u=Depends(admin), db=Depends(db_dep)):
-        return [dict(target=row.id, contract_id=row.contract_id, contract=row.name, external_id=row.external_id)
+        return [dict(target=row.id, contract_id=row.contract_id, contract=row.name, external_id=row.external_id,
+                     kind=row.kind, reference=row.reference if row.kind == "corrective" else None)
                 for row in db.execute(available(db))]
 
     @app.put("/api/work-orders/{oid}")
@@ -223,7 +242,10 @@ def register(app, db_dep, user_dep, admin, audit):
             raise HTTPException(422, "Identificador inválido.")
         lock_catalogue(db)
         order = db.get(WorkOrder, str(oid))
-        if order and db.get(WorkOrderCancellation, order.id):
+        cancellation = db.get(WorkOrderCancellation, order.id) if order else None
+        if (cancellation and cancellation.cancelled_at <= cancellation_cutoff()) or (not order and db.get(DeletedWorkOrder, str(oid))):
+            raise HTTPException(410, "Esta ordem de trabalho foi eliminada.")
+        if cancellation:
             raise HTTPException(409, "Esta ordem foi cancelada.")
         start, due = body.start.isoformat(), body.due.isoformat()
         techs, targets = [str(i) for i in body.technicians], [str(i) for i in body.targets]
@@ -254,8 +276,9 @@ def register(app, db_dep, user_dep, admin, audit):
         changed_start = not order or order.start != start
         if not order:
             prefix = f"OT-{body.start:%Y%m}-"
-            # No deletion endpoint; the catalogue lock serializes numbering across workers.
-            sequence = db.scalar(select(func.count()).select_from(WorkOrder).where(WorkOrder.code.startswith(prefix))) + 1
+            # Include retired numbers in the original month, even after the last order is deleted.
+            sequence = 1 + sum(db.scalar(select(func.count()).select_from(table).where(table.code.startswith(prefix)))
+                               for table in (WorkOrder, DeletedWorkOrder))
             order = WorkOrder(id=str(oid), code=f"{prefix}{sequence:04d}", revision=0, followers=[u.id])
             db.add(order)
         order.start, order.due = start, due
@@ -265,7 +288,7 @@ def register(app, db_dep, user_dep, admin, audit):
             item = old.get(target)
             if not item:
                 c = eligible[target]
-                item = WorkItem(id=str(uuid4()), kind="preventive", target=target, contract_id=c.contract_id,
+                item = WorkItem(id=str(uuid4()), kind=c.kind, target=target, contract_id=c.contract_id,
                                 external_id=c.external_id, contract_name=c.name, client=c.company,
                                 station_id=c.station_id, state="pending")
             item.position = pos

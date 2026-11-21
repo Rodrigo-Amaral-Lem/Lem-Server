@@ -74,6 +74,37 @@ class Contract(Base):
     name: Mapped[str] = mapped_column(String(240), unique=True)
 
 
+class CorrectiveContract(Base):
+    __tablename__ = "corrective_contracts"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    company: Mapped[str] = mapped_column(String(120))
+    name: Mapped[str] = mapped_column(String(240), unique=True)
+    start: Mapped[str] = mapped_column(String(10))
+    end: Mapped[str] = mapped_column(String(10))
+
+
+class CorrectiveCoverage(Base):
+    __tablename__ = "corrective_coverage"
+    contract_id: Mapped[str] = mapped_column(ForeignKey("corrective_contracts.id"), primary_key=True)
+    station_id: Mapped[str] = mapped_column(ForeignKey("stations.id"), primary_key=True, index=True)
+
+
+class Intervention(Base):
+    """One job, one report scope, independent of coverage and other visits to the station.
+
+    The scope and its sole Charger use the job UUID so existing report storage,
+    permissions, offline uploads and corrections can address the visit directly.
+    Only corrective_contract_id represents a commercial contract for this job.
+    """
+    __tablename__ = "interventions"
+    id: Mapped[str] = mapped_column(ForeignKey("contracts.id"), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(20))
+    corrective_contract_id: Mapped[str | None] = mapped_column(ForeignKey("corrective_contracts.id"))
+    created: Mapped[str] = mapped_column(String(50), default=now)
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    request_digest: Mapped[str] = mapped_column(String(64))
+
+
 # Separate table permits a non-destructive upgrade of existing installations.
 # Brand artwork is retained independently of future catalogue updates.
 class ContractBranding(Base):
@@ -276,6 +307,20 @@ class WorkOrderCancellation(Base):
     order_id: Mapped[str] = mapped_column(ForeignKey("work_orders.id"), primary_key=True)
     cancelled_at: Mapped[str] = mapped_column(String(50))
     actor_id: Mapped[str] = mapped_column(String(36))
+
+
+class DeletedWorkOrder(Base):
+    """Keep allocated identities so a delayed creation retry cannot resurrect an order."""
+    __tablename__ = "deleted_work_order_ids"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    code: Mapped[str] = mapped_column(String(40), unique=True)
+
+
+class ExpiredVisitDraft(Base):
+    """An existing report retains its original visit when that order expires."""
+    __tablename__ = "expired_visit_drafts"
+    report_id: Mapped[str] = mapped_column(ForeignKey("reports.id", ondelete="CASCADE"), primary_key=True)
+    item_id: Mapped[str] = mapped_column(String(36))
 
 
 class WorkItemDraft(Base):

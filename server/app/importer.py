@@ -34,7 +34,7 @@ from .import_profiles import (
 
 
 # Bound archive expansion and row counts before reading cell data.
-def workbook(data):
+def workbook(data, *, data_only=True):
     try:
         with ZipFile(BytesIO(data)) as z:
             if sum(x.file_size for x in z.infolist()) > 100 * 1024 * 1024:
@@ -48,7 +48,7 @@ def workbook(data):
                     with z.open(entry) as part:
                         for _, element in safe_iterparse(part, events=("end",), forbid_dtd=True):
                             element.clear()
-        w = openpyxl.load_workbook(BytesIO(data), read_only=True, data_only=True)
+        w = openpyxl.load_workbook(BytesIO(data), read_only=True, data_only=data_only)
         if sum(s.max_row or 0 for s in w) > 100000:
             w.close()
             raise ValueError("Máximo 100000 linhas")

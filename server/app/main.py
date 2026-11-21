@@ -65,7 +65,8 @@ from .maintenance_migration import upgrade_checkpoint, persist_upgrade
 from .exports import write_bundle, file_chunks, MissingEvidence
 from .report_naming import EVIDENCE_EXTENSIONS, content_disposition, evidence_stem, report_identifier
 from .contract_trash import RETENTION, utc_now, purge_expired
-from . import corrections, work_orders
+from .work_order_retention import purge_cancelled_orders
+from . import corrections, interventions, work_orders
 
 SESSION_LIFETIME = timedelta(days=365)
 from .evidence_cache import EvidenceCache, EvidenceResponse
@@ -216,10 +217,11 @@ def create_app(url=None, bootstrap=True):
 
         async def sweep():
             while not stop.is_set():
-                try:
-                    await asyncio.to_thread(purge_expired, Factory)
-                except Exception:
-                    logging.getLogger(__name__).exception("Contract retention sweep failed; retrying")
+                for cleanup in (purge_expired, purge_cancelled_orders):
+                    try:
+                        await asyncio.to_thread(cleanup, Factory)
+                    except Exception:
+                        logging.getLogger(__name__).exception("Retention sweep %s failed; retrying", cleanup.__name__)
                 try:
                     await asyncio.wait_for(stop.wait(), timeout=60)
                 except asyncio.TimeoutError:
@@ -389,8 +391,10 @@ def create_app(url=None, bootstrap=True):
             raise HTTPException(404, "Report inexistente")
         charger = db.get(Charger, r.charger_id)
         accessible(db, user, charger.contract_id, target=charger.id, report_id=rid, working=write)
-        if write and (item := work_orders.bound_item(db, rid)) and item.state != "pending" and r.status == "draft":
-            raise HTTPException(403, "A visita de origem terminou. O rascunho está disponível para consulta.")
+        if write and r.status == "draft":
+            item = work_orders.bound_item(db, rid)
+            if (item and item.state != "pending") or db.get(work_orders.ExpiredVisitDraft, rid):
+                raise HTTPException(403, "A visita de origem terminou. O rascunho está disponível para consulta.")
         corrections.gate(db, user, rid)
         if write and r.owner_id != user.id:
             raise HTTPException(
@@ -448,10 +452,13 @@ def create_app(url=None, bootstrap=True):
                            "external_id": charger.external_id, "details": charger.details,
                            "updated": charger.station.updated if charger.station is not None else None}}
                           if correction and correction.state == "committed" else {})
+        item = work_orders.bound_item(db, r.id)
+        expired = db.get(work_orders.ExpiredVisitDraft, r.id) if not item and r.status == "draft" else None
         return {
             "id": r.id,
             "contract_id": contract_id,
-            "work_item_id": item.id if (item := work_orders.bound_item(db, r.id)) else None,
+            "work_item_id": item.id if item else expired.item_id if expired else None,
+            **({"work_item_expired": True} if expired else {}),
             "station_id": charger.station_id,
             "presentation": contract_presentation(db, contract_id),
             "identifier": report_identifier({"snapshot": r.snapshot}),
@@ -604,6 +611,8 @@ def create_app(url=None, bootstrap=True):
     @app.get("/api/contracts")
     def contracts(u=Depends(user_dep), db=Depends(db_dep)):
         query = select(Contract).where(~Contract.id.in_(select(ContractTrash.contract_id))).order_by(Contract.year.desc(), Contract.company, Contract.semester)
+        if not db.info.get("order_catalogue"):
+            query = query.where(~Contract.id.in_(select(interventions.Intervention.id)))
         if u.role != "admin":
             full = set(db.scalars(select(Assignment.contract_id).where(Assignment.user_id == u.id)))
             scoped_targets = {}
@@ -613,9 +622,12 @@ def create_app(url=None, bootstrap=True):
                         .order_by(Charger.id)):
                     scoped_targets.setdefault(cid, []).append(target)
             query = query.where(Contract.id.in_(full | scoped_targets.keys()))
+        scopes = list(db.scalars(query))
+        jobs = interventions.catalogue_jobs(db, [c.id for c in scopes if c.kind in ("corrective", "commissioning")], u)
         return [
             {
                 "id": c.id,
+                **({"intervention": jobs[c.id]} if c.id in jobs else {}),
                 **({"order_only": True, "order_targets": scoped_targets[c.id]} if u.role != "admin" and c.id not in full else {}),
                 "company": c.company,
                 "year": c.year,
@@ -625,7 +637,7 @@ def create_app(url=None, bootstrap=True):
                 "report_logos": contract_logos(db, c.id),
                 "presentation": contract_presentation(db, c.id),
             }
-            for c in db.scalars(query)
+            for c in scopes
         ]
 
     class ReportPresentationInput(BaseModel):
@@ -662,6 +674,7 @@ def create_app(url=None, bootstrap=True):
 
     @app.post("/api/contracts/{cid}/trash")
     def trash_contract(cid: str, body: TrashContractInput, u=Depends(admin), db=Depends(db_dep)):
+        interventions.require_preventive_scope(db, cid)
         if body.confirmation != "APAGAR":
             raise HTTPException(422, 'Escreva exatamente "APAGAR" para confirmar')
         c = db.scalar(select(Contract).where(Contract.id == cid).with_for_update())
@@ -717,6 +730,7 @@ def create_app(url=None, bootstrap=True):
 
     @app.put("/api/contracts/{cid}/users/{user_id}")
     def assign(cid: str, user_id: str, u=Depends(admin), db=Depends(db_dep)):
+        interventions.require_preventive_scope(db, cid)
         target = db.scalar(select(User).where(User.id == user_id)
                            .with_for_update(read=True).execution_options(populate_existing=True))
         if not target or target.role not in ("admin", "tech"):
@@ -751,7 +765,8 @@ def create_app(url=None, bootstrap=True):
                    Report.started, Report.finished, ReportCorrection.state.label("correction_state"),
                    ReportCorrection.editor_id.label("correction_editor"),
                    Report.snapshot["charger"]["external_id"].as_string().label("report_charger"),
-                   Report.snapshot["contract"]["name"].as_string().label("report_contract"))
+                   Report.snapshot["contract"]["name"].as_string().label("report_contract"),
+                   Report.snapshot["intervention"]["reference"].as_string().label("reference"))
             .join(Charger, Charger.id == Report.charger_id)
             .outerjoin(ReportCorrection, ReportCorrection.id == Report.id)
             .where(visible, Charger.id.in_(work_orders.assigned_items(u.id, report_id=Report.id)) if limited else True)
@@ -766,7 +781,7 @@ def create_app(url=None, bootstrap=True):
                     "id": row.id,
                     "identifier": report_identifier({
                         "snapshot": {"charger": {"external_id": row.report_charger},
-                                     "contract": {"name": row.report_contract}}}),
+                                     "contract": {"name": row.report_contract}, "intervention": {"reference": row.reference}}}),
                     "status": row.status,
                     "owner_id": row.owner_id,
                     "updated": row.updated,
@@ -868,6 +883,7 @@ def create_app(url=None, bootstrap=True):
     @app.delete("/api/contracts/{cid}/chargers/{charger_id}")
     def detach_charger(cid: str, charger_id: str, u=Depends(admin), db=Depends(db_dep)):
         lock_catalogue(db)
+        interventions.require_preventive_scope(db, cid)
         accessible(db, u, cid, write=True)
         charger = db.scalar(select(Charger).where(Charger.id == charger_id, Charger.contract_id == cid)
                             .with_for_update())
@@ -888,7 +904,8 @@ def create_app(url=None, bootstrap=True):
         query = (select(Report.id, Report.charger_id, Report.status, Report.started, Report.finished, Contract.name.label("contract"),
                         Contract.id.label("contract_id"),
                         Report.snapshot["charger"]["external_id"].as_string().label("pcve"),
-                        Report.snapshot["contract"]["name"].as_string().label("original_contract"))
+                        Report.snapshot["contract"]["name"].as_string().label("original_contract"),
+                        Report.snapshot["intervention"]["reference"].as_string().label("reference"))
                  .join(Charger, Charger.id == Report.charger_id)
                  .join(Contract, Contract.id == Charger.contract_id)
                  .outerjoin(ReportCorrection, ReportCorrection.id == Report.id)
@@ -904,7 +921,8 @@ def create_app(url=None, bootstrap=True):
         return [{"id": row.id, "charger_id": row.charger_id, "status": row.status, "contract": row.contract,
                  "contract_id": row.contract_id, "started": row.started, "finished": row.finished,
                  "identifier": report_identifier({"snapshot": {"charger": {"external_id": row.pcve},
-                                                              "contract": {"name": row.original_contract}}})}
+                                                              "contract": {"name": row.original_contract},
+                                                              "intervention": {"reference": row.reference}}})}
                 for row in db.execute(query.where(visible))]
 
     @app.patch("/api/stations/{sid}")
@@ -994,6 +1012,7 @@ def create_app(url=None, bootstrap=True):
         u=Depends(admin),
         db=Depends(db_dep),
     ):
+        interventions.require_preventive_scope(db, cid)
         config = import_mapping(mapping)
         logos = selection(config["report_logos"]) if "report_logos" in config else None
         issuer = config.get("report_issuer")
@@ -1244,6 +1263,13 @@ def create_app(url=None, bootstrap=True):
             visit = work_orders.pending_item(db, charger.id) if r else None
             if visit is None:
                 raise HTTPException(403, "Indique a tarefa de origem para enviar este rascunho.")
+        if creating or body.status == "closed":
+            planned = visit or work_orders.pending_item(db, charger.id)
+            # A directly shared draft can be scheduled after the technician starts it.
+            if planned and planned.kind == "corrective":
+                order = db.get(work_orders.WorkOrder, planned.order_id)
+                if not work_orders.has_started(order, work_orders.lisbon_now().date().isoformat()):
+                    raise HTTPException(409, "A ordem desta intervenção ainda não começou.")
         if r:
             # Authorize and check the revision before migrating. Validation below
             # atomically upgrades editable v6 data and checks the resulting schema.
@@ -1261,7 +1287,9 @@ def create_app(url=None, bootstrap=True):
         else:
             # One field draft per planned visit. Keep ordinary unplanned contract
             # work independent. Exact retries still use the existing report above.
-            planned = visit or work_orders.pending_item(db, charger.id)
+            job = db.get(interventions.Intervention, charger.id)
+            if job and db.scalar(select(Report.id).where(Report.charger_id == charger.id).limit(1)):
+                raise HTTPException(409, "Esta intervenção já tem um relatório. Abra o relatório existente.")
             if planned and db.scalar(work_orders.current_drafts(planned).limit(1)):
                 raise HTTPException(409, "Este ID já tem um rascunho. Consulte o proprietário na ordem. A cópia local foi conservada.")
             if db.get(DetachedCharger, charger.id):
@@ -1304,6 +1332,7 @@ def create_app(url=None, bootstrap=True):
                         "semester": contract.semester,
                         "kind": contract.kind,
                     },
+                    **(interventions.report_context(db, job, contract.name) if job else {}),
                 },
                 template=checklist,
             )
@@ -1827,5 +1856,6 @@ def create_app(url=None, bootstrap=True):
             db.close()
         return ExportFileResponse(spool, size, doc["identifier"])
 
+    interventions.register(app, db_dep, user_dep, admin, audit, visible_stations, file_bytes)
     work_orders.register(app, db_dep, user_dep, admin, audit)
     return app

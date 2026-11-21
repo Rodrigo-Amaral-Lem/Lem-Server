@@ -5,6 +5,9 @@ function renderReport(report, styles, host) {
     "use strict";
     var snapshot = report.snapshot || {}, charger = snapshot.charger || {}, contract = snapshot.contract || {};
     var payload = report.payload || {}, answers = payload.answers || {};
+    var job = snapshot.intervention || {};
+    var title = job.kind === "commissioning" ? "RELATÓRIO DE COMISSIONAMENTO" :
+                job.kind === "corrective" ? "RELATÓRIO DE MANUTENÇÃO CORRETIVA" : "RELATÓRIO DE MANUTENÇÃO";
     var presentation = report.presentation || {issuer: "Lem", client_logos: contract.report_logos || []};
     var style = styles[presentation.issuer] || styles.Lem;
     var left = 35, width = 525, bottom = 790, y = 35, page = 1;
@@ -21,7 +24,7 @@ function renderReport(report, styles, host) {
     }
     function footer() {
         host.rect(left, 803, width, 1, style.accent);
-        host.text(style.label + " · Relatório de manutenção PCVE", left, 813, 8, false, muted);
+        host.text(style.label + (job.kind === "commissioning" ? " · Comissionamento PCVE" : " · Relatório de manutenção PCVE"), left, 813, 8, false, muted);
         host.text("Página " + page, 510, 813, 8, false, muted);
     }
     function next() {
@@ -63,9 +66,10 @@ function renderReport(report, styles, host) {
     var logos = (presentation.client_logos || []).filter(function(logo) { return logo.id !== "Lem" && logo.id !== "CSMTEC"; }).slice(0, 2);
     for (var l = 0; l < logos.length; l++) image("data:" + logos[l].png, left + width - logos.length * 150 + l * 150, 35, 140, 66);
     y = 118;
-    text("RELATÓRIO DE MANUTENÇÃO", 17, true, style.primary);
+    text(title, 17, true, style.primary);
     host.rect(left, y + 1, width, 3, style.accent); y += 18;
     row("Entidade", style.label);
+    row("Intervenção", job.reference);
     row("Contrato", contract.name); row("Cliente", contract.company); row("ID do carregador", charger.external_id);
     var fields = [["address", "Morada"], ["postal_code", "Código postal"], ["cpe", "CPE"], ["manufacturer", "Fabricante"],
         ["model", "Modelo"], ["serial", "Número de série"], ["power", "Potência"], ["power_limit", "Limitação de potência"],
