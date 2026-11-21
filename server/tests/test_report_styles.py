@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pypdf import PdfReader
 from test_workflow import setup, xlsx, MAPPING, answers, add_signature
+from app.compatibility import VERSION
 from app.main import TEMPLATE
 
 
@@ -20,7 +21,7 @@ def test_saved_format_survives_new_session_and_server_restart(setup):
     database_url = engine.url.render_as_string(hide_password=False)
     engine.dispose()
     restarted = create_app(database_url)
-    with TestClient(restarted, headers={'X-Lem-Client-Version': '0.5.5'}) as fresh:
+    with TestClient(restarted, headers={'X-Lem-Client-Version': VERSION}) as fresh:
         login = fresh.post('/api/login', json={'email': 'admin@lem.pt', 'password': 'StrongPassword123!'})
         assert login.status_code == 200, login.text
         auth = {'Authorization': 'Bearer ' + login.json()['token']}

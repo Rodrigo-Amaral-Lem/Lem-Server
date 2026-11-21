@@ -9,6 +9,7 @@ from io import BytesIO
 from fastapi.testclient import TestClient
 from PIL import Image
 from sqlalchemy import select, func
+from app.compatibility import VERSION
 from app.models import (Contract, ContractTrash, Charger, Report, DeletedReport,
                         OwnershipTransfer, Photo, Assignment, ImportBatch, Audit, SessionToken)
 from app.contract_trash import utc_now
@@ -165,7 +166,7 @@ def test_existing_database_upgrade_adds_only_retention_table(setup):
     ContractTrash.__table__.drop(engine)
     from app.main import create_app
     upgraded=create_app(str(engine.url),bootstrap=False)
-    with TestClient(upgraded,headers={"X-Lem-Client-Version":"0.5.5"}) as live:
+    with TestClient(upgraded, headers={"X-Lem-Client-Version": VERSION}) as live:
         assert live.get(f"/api/reports/{rid}",headers=h).status_code == 200
         assert trash(live,h,cid).status_code == 200
         assert live.post(f"/api/contracts/{cid}/restore",headers=h).status_code == 200

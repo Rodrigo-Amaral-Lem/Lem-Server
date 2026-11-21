@@ -16,6 +16,10 @@ from .stations import lock_catalogue
 from .work_order_retention import cancellation_cutoff
 
 
+INTERVENTION_KINDS = ("corrective", "commissioning")
+WORK_ITEM_KINDS = ("preventive", *INTERVENTION_KINDS)
+
+
 def lisbon_now():
     return datetime.now(ZoneInfo("Europe/Lisbon"))
 
@@ -28,7 +32,7 @@ def has_started(order, today):
 def assigned_items(user_id, *, writable=False, report_id=None):
     query = (select(WorkItem.target).join(WorkAssignee, WorkAssignee.order_id == WorkItem.order_id)
              .join(WorkOrder, WorkOrder.id == WorkItem.order_id)
-             .where(WorkAssignee.user_id == user_id, WorkItem.kind.in_(("preventive", "corrective")), WorkItem.state != "cancelled"))
+             .where(WorkAssignee.user_id == user_id, WorkItem.kind.in_(WORK_ITEM_KINDS), WorkItem.state != "cancelled"))
     if report_id is not None:
         bindings = (select(WorkItemDraft.item_id).where(WorkItemDraft.report_id == report_id)
                     .correlate_except(WorkItemDraft))
@@ -83,7 +87,7 @@ def current_drafts(item):
 
 
 def pending_item(db, target):
-    return db.scalar(select(WorkItem).where(WorkItem.kind.in_(("preventive", "corrective")),
+    return db.scalar(select(WorkItem).where(WorkItem.kind.in_(WORK_ITEM_KINDS),
                      WorkItem.target == target, WorkItem.state == "pending"))
 
 
@@ -142,12 +146,13 @@ def available(db):
                                         WorkItem.state == "pending").exists()
     return (select(Charger.id, Charger.contract_id, Charger.station_id, Charger.external_id,
                    case((Intervention.id.is_(None), Contract.name),
-                        else_=func.coalesce(CorrectiveContract.name, "Sem contrato")).label("name"),
+                        (Intervention.kind == "corrective",
+                         func.coalesce(CorrectiveContract.name, "Sem contrato"))).label("name"),
                    func.coalesce(Intervention.kind, "preventive").label("kind"), Contract.name.label("reference"),
                    Contract.company).join(Contract, Contract.id == Charger.contract_id)
             .outerjoin(Intervention, Intervention.id == Charger.id)
             .outerjoin(CorrectiveContract, CorrectiveContract.id == Intervention.corrective_contract_id)
-            .where(Intervention.id.is_(None) | (Intervention.kind == "corrective"))
+            .where(Intervention.id.is_(None) | Intervention.kind.in_(INTERVENTION_KINDS))
             .where(attached_charger(), ~Contract.id.in_(select(ContractTrash.contract_id)), ~closed, ~planned)
             .order_by(Contract.name, Charger.external_id))
 
@@ -180,7 +185,7 @@ def register(app, db_dep, user_dep, admin, audit):
             assignees.setdefault(oid, []).append({"id": uid, "name": name, "role": role})
         targets = {i.target for o in orders for i in o.items}
         references = dict(db.execute(select(Contract.id, Contract.name).where(Contract.id.in_(
-            {i.contract_id for o in orders for i in o.items if i.kind == "corrective"}))).all())
+            {i.contract_id for o in orders for i in o.items if i.kind in INTERVENTION_KINDS}))).all())
         chargers = {c.id: c for c in db.scalars(select(Charger).options(selectinload(Charger.contract_note)).where(Charger.id.in_(targets),
                     attached_charger(), ~Charger.contract_id.in_(select(ContractTrash.contract_id)))).unique()}
         pending = {i.target for o in orders for i in o.items if i.state == "pending" and i.target in chargers}
@@ -233,7 +238,7 @@ def register(app, db_dep, user_dep, admin, audit):
     @app.get("/api/work-order-candidates")
     def candidates(u=Depends(admin), db=Depends(db_dep)):
         return [dict(target=row.id, contract_id=row.contract_id, contract=row.name, external_id=row.external_id,
-                     kind=row.kind, reference=row.reference if row.kind == "corrective" else None)
+                     kind=row.kind, reference=row.reference if row.kind in INTERVENTION_KINDS else None)
                 for row in db.execute(available(db))]
 
     @app.put("/api/work-orders/{oid}")

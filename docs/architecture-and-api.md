@@ -233,7 +233,15 @@ the temporary `template.frozen_upload` state disables editing until its original
 
 ## Work orders
 
-Administrators can plan preventive memberships and individual corrective jobs in one ordered list. `GET /api/work-order-candidates` returns eligible targets without a closed report or a pending order item. `PUT /api/work-orders/{uuid}` takes the same client-generated id, revision, ISO start/due dates, technician UUIDs and ordered target UUIDs. Empty orders and repeated targets are rejected. The code uses the original start month and a serialized monthly counter. A resolved item retains its result, actor and time. Each corrective target addresses a particular intervention, so the same PCVE may have several independently actionable rows.
+Administrators can combine preventive memberships, corrective jobs and commissioning jobs in one
+ordered list. `GET /api/work-order-candidates` returns targets without a closed report or a pending
+order item. `PUT /api/work-orders/{uuid}` takes the same client-generated id, revision, ISO start/due
+dates, technician UUIDs and ordered target UUIDs. Each intervention target addresses its own visit,
+so one PCVE may have several independently actionable rows. Corrective and commissioning items carry
+their public reference in the candidate and order responses. On commissioning rows, `contract` is
+null and `contract_id` identifies the internal report scope. Empty orders and repeated targets are
+rejected. The code uses the original start month and a serialized monthly counter. A resolved item
+retains its result, actor and time.
 
 ### Corrective coverage and station interventions
 
@@ -241,7 +249,7 @@ Administrators can plan preventive memberships and individual corrective jobs in
 
 `GET /api/corrective-contracts?station_id={uuid}` lists the administrator's eligible choices for today, latest start first, then name. `PUT /api/interventions/{uuid}` takes a station UUID, a `kind` of `corrective` or `commissioning`, and optional `technician` and `notes`. For a corrective, omitting `contract_id` applies the first eligible contract. Explicit null creates sporadic work. A supplied contract must cover this station today. Commissioning requires an empty contract choice. Technicians can commission their own visible stations. Administrators can create either type and share a job via `PUT /api/interventions/{uuid}/share`, with the previous and desired technician UUIDs or null. Creation retries use the original request UUID.
 
-The report service represents each intervention by a single-member access scope. Its scope and report target share the intervention UUID. Clients include `X-Lem-Work-Orders: 1` on `GET /api/contracts` to receive intervention scopes. Each such row has an `intervention` object and appears in the intervention menus. The default catalogue lists ordinary contracts. The optional commercial contract is stored independently. Existing membership notes, scoped work-order grants, evidence, closure and corrections apply to the intervention's report. The database catalogue lock serializes creation, planning and the first report claim. A corrective placed in a future order can be opened and closed from the order's start date, including when a directly shared draft already exists.
+The report service represents each intervention by a single-member access scope. Its scope and report target share the intervention UUID. Clients include `X-Lem-Work-Orders: 1` on `GET /api/contracts` to receive intervention scopes. Each such row has an `intervention` object and appears in the intervention menus. The default catalogue lists ordinary contracts. The optional commercial contract is stored independently. Existing membership notes, scoped work-order grants, evidence, closure and corrections apply to the intervention's report. The database catalogue lock serializes creation, planning and the first report claim. For both types, the order grants the assigned crew access to the visit. New reports and closure must wait until the order starts, including closure of an existing directly shared draft.
 
 `GET /api/work-orders` lists all orders for administrators and assigned orders for technicians. The header `X-Lem-Work-Orders: 1` includes limited contracts in the ordinary catalogue. The server enforces each membership and Lisbon start date on report creation and updates. An independent whole-contract grant remains effective. Overdue items remain actionable. Closing a report resolves its pending membership in the same transaction. Invalidating via `PUT /api/work-orders/{id}/items/{item}/invalid` requires an assigned technician, revision and observation. It leaves the contract eligible for a future visit.
 

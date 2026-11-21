@@ -16,6 +16,7 @@ from PIL import Image
 from pypdf import PdfReader
 from fastapi.testclient import TestClient
 
+from app.compatibility import VERSION
 from app.main import TEMPLATE
 from test_workflow import setup, upload, answers, add_signature
 
@@ -186,7 +187,7 @@ def test_export_errors_release_resources_and_allow_retry(exports, monkeypatch, k
     report = reports[0]
     url = f'/api/reports/{report["id"]}/{kind}'
     # More failures than admission slots catches slots leaked on error paths.
-    with TestClient(app, headers={"X-Lem-Client-Version": "0.5.5"}, raise_server_exceptions=False) as failing_client:
+    with TestClient(app, headers={"X-Lem-Client-Version": VERSION}, raise_server_exceptions=False) as failing_client:
         for _ in range(5):
             assert failing_client.get(url, headers=admin).status_code == 500
             assert all(spool.closed for spool in spools)

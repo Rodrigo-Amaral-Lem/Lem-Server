@@ -4,6 +4,7 @@ import uuid
 import pytest
 from PIL import Image
 from sqlalchemy import select
+from app.compatibility import VERSION
 from test_workflow import setup
 from test_export_resources import make_report
 
@@ -67,7 +68,7 @@ def test_slow_download_releases_pool_and_limits_memory(tmp_path, monkeypatch):
     scope = {'type':'http','asgi':{'version':'3.0','spec_version':'2.4'}, 'method':'GET',
         'scheme':'http','path':url,'raw_path':url.encode(),'query_string':b'', 'http_version':'1.1',
         'server':('testserver',80),'client':('127.0.0.1',1234),
-        'headers':[(b'x-lem-client-version',b'0.5.5'),(b'authorization',h['Authorization'].encode())]}
+        'headers':[(b'x-lem-client-version', VERSION.encode('ascii')),(b'authorization',h['Authorization'].encode())]}
     async def receive():
         await asyncio.sleep(30)
         return {'type':'http.disconnect'}

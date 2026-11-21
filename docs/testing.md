@@ -201,7 +201,10 @@ lost acknowledgements and detachment. It uses generated workbooks and disposable
 
 The work-order suite exercises simultaneous draft claims, cancellation retries, removal of scoped grants and reusing released IDs in another order on SQLite and PostgreSQL. It crosses the Lisbon daylight-saving change to check the exact 24-hour cutoff, concurrent cleanup, repeat creation requests, monthly codes and recovery of a draft with its attachment.
 
-`server/tests/test_interventions.py` exercises dated XLSX coverage, automatic and explicit contract selection, individual grants, technician-created commissioning, mixed work-order closure, export identity and concurrent report creation. Run it with the same disposable PostgreSQL fixture to check row locking in addition to SQLite.
+`server/tests/test_interventions.py` exercises dated XLSX coverage, contract selection, individual and
+work-order grants, mixed orders with all three visit types, export identity and concurrent report
+creation. It also covers a commissioning draft that predates a future order and can be carried into
+a replacement order after cancellation. Run with the disposable PostgreSQL fixture as well as SQLite.
 
 ## Report, visit and import integrity
 

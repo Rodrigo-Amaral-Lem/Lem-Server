@@ -1266,7 +1266,7 @@ def create_app(url=None, bootstrap=True):
         if creating or body.status == "closed":
             planned = visit or work_orders.pending_item(db, charger.id)
             # A directly shared draft can be scheduled after the technician starts it.
-            if planned and planned.kind == "corrective":
+            if planned and planned.kind in work_orders.INTERVENTION_KINDS:
                 order = db.get(work_orders.WorkOrder, planned.order_id)
                 if not work_orders.has_started(order, work_orders.lisbon_now().date().isoformat()):
                     raise HTTPException(409, "A ordem desta intervenção ainda não começou.")
