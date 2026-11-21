@@ -224,7 +224,7 @@ def test_mixed_order_individual_grants_and_distinct_visits(backend, request, tod
             add_signature(client, tech, done["id"], completion)
             result = client.put(endpoint, headers=tech, json={**payload, "charger_id":target, "work_item_id":None,
                                 "base_revision":1, "status":"closed", "payload":completion})
-            assert result.status_code == 409 and "ainda não começou" in result.json()["detail"]
+            assert result.status_code == 409 and result.json()["reason"] == "work_order_not_started"
             assert client.get(endpoint, headers=tech).json()["status"] == "draft"
     with app.state.factory() as db:
         assert db.scalar(select(func.count()).select_from(Intervention)) == 5
@@ -253,8 +253,12 @@ def test_ordered_commissioning_respects_start_and_can_be_rescheduled(backend, re
     completion = {"answers": answers()}
     add_signature(client, tech, report_id, completion)
     close = {**draft, "base_revision": 1, "status": "closed", "payload": completion}
-    too_early = client.put(endpoint, headers=tech, json=close)
-    assert too_early.status_code == 409 and "ainda não começou" in too_early.json()["detail"]
+    too_early = client.put(endpoint, headers={**tech, "X-Lem-Client-Version": "0.6.1"}, json=close)
+    assert too_early.status_code == 409
+    assert too_early.json() == {
+        "reason": "work_order_not_started",
+        "detail": "A ordem desta intervenção ainda não começou.",
+    }
     assert client.get(endpoint, headers=tech).json()["status"] == "draft"
 
     client.put(f"/api/work-orders/{future}/cancel", headers=admin, json={"revision": 1}).raise_for_status()

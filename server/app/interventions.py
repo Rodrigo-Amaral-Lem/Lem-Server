@@ -14,9 +14,9 @@ from sqlalchemy import delete, func, select
 from .import_profiles import normalize_contract_notes
 from .importer import cell_text, workbook
 from .models import (Assignment, Charger, Contract, ContractChargerNote, CorrectiveContract, CorrectiveCoverage,
-                     Intervention, Report, ReportCorrection, Station, User, set_contract_notes)
+                     Intervention, Report, Station, User, set_contract_notes)
 from .stations import lock_catalogue, stations_for_import
-from .work_orders import assigned_items, lisbon_now
+from .work_orders import assigned_items, current_ordinary_drafts, lisbon_now
 
 
 class NewIntervention(BaseModel):
@@ -28,9 +28,15 @@ class NewIntervention(BaseModel):
     notes: str = Field(default="", max_length=32767)
 
 
+class DraftHandoff(BaseModel):
+    report_id: UUID
+    base_revision: int = Field(ge=1)
+
+
 class Share(BaseModel):
     technician: UUID | None
     previous: UUID | None
+    handoff: DraftHandoff | None = None
 
 
 def coverage_for(station_id, day):
@@ -94,6 +100,11 @@ def require_preventive_scope(db, scope):
         raise HTTPException(409, "Utilize o menu da intervenção para gerir esta tarefa.")
 
 
+def active_report():
+    # A resolved visit's recovery draft remains attached to its own work item.
+    return (Report.status == "closed") | Report.id.in_(current_ordinary_drafts())
+
+
 def catalogue_jobs(db, scope_ids, user):
     """Enrich only the authorized scopes, without loading answers or evidence."""
     if not scope_ids:
@@ -110,15 +121,17 @@ def catalogue_jobs(db, scope_ids, user):
                         "station_id": charger.station_id, "external_id": charger.external_id, "details": charger.details,
                         "contract": contract_data(coverage) if coverage else None, "technician": technician,
                         "notes": note.text if note else "", "notes_revision": note.revision if note else 0}
-    reports = (select(Report.charger_id, Report.id, Report.status)
-               .outerjoin(ReportCorrection, ReportCorrection.id == Report.id)
-               .where(Report.charger_id.in_(jobs), ReportCorrection.id.is_(None) | (ReportCorrection.state == "committed")))
+    reports = (select(Report.charger_id, Report.id, Report.status, Report.owner_id, Report.revision)
+               .where(Report.charger_id.in_(jobs), active_report()))
     if user.role != "admin":
         direct = select(Assignment.contract_id).where(Assignment.user_id == user.id)
         reports = reports.where(Report.charger_id.in_(direct) |
                                 Report.charger_id.in_(assigned_items(user.id, report_id=Report.id)))
-    for target, rid, status in db.execute(reports):
-        jobs[target].update(report_id=rid, status=status)
+    for target, rid, status, owner, revision in db.execute(reports):
+        job = jobs[target]
+        job.update(report_id=rid, status=status)
+        if user.role == "admin" and status == "draft" and owner == job["technician"]:
+            job["handoff"] = {"report_id": rid, "base_revision": revision}
     return jobs
 
 
@@ -131,7 +144,7 @@ def technician_id(db, value):
     return uid
 
 
-def register(app, db_dep, user_dep, admin, audit, visible_stations, file_bytes):
+def register(app, db_dep, user_dep, admin, audit, visible_stations, file_bytes, change_draft_owner):
     @app.get("/api/corrective-contracts")
     def contracts(station_id: UUID | None = None, u=Depends(admin), db=Depends(db_dep)):
         if station_id:
@@ -232,20 +245,35 @@ def register(app, db_dep, user_dep, admin, audit, visible_stations, file_bytes):
     @app.put("/api/interventions/{iid}/share")
     def share(iid: UUID, body: Share, u=Depends(admin), db=Depends(db_dep)):
         key = str(iid)
+        tech = technician_id(db, body.technician)
         lock_catalogue(db)
         if not db.get(Intervention, key):
             raise HTTPException(404, "Intervenção inexistente.")
-        tech = technician_id(db, body.technician)
+        # Report writes also take the scope lock before touching the draft.
+        db.scalar(select(Contract.id).where(Contract.id == key).with_for_update())
         current = db.scalar(select(Assignment.user_id).where(Assignment.contract_id == key))
-        if current != tech:
-            if current != (str(body.previous) if body.previous else None):
-                raise HTTPException(409, "A atribuição mudou. Atualize a intervenção.")
-            if current and db.scalar(select(Report.id).where(Report.charger_id == key,
-                                      Report.owner_id == current, Report.status == "draft").limit(1)):
-                raise HTTPException(409, "O técnico tem um rascunho. Transfira primeiro a propriedade do relatório.")
-            db.execute(delete(Assignment).where(Assignment.contract_id == key))
-            if tech:
-                db.add(Assignment(contract_id=key, user_id=tech))
-            audit(db, u, "intervention.share", key)
-            db.commit()
+        handoff = body.handoff
+        stale_draft = "O rascunho mudou. Atualize a intervenção antes de o transferir."
+        if current == tech:
+            if handoff:
+                report = db.get(Report, str(handoff.report_id))
+                if (not tech or not report or report.charger_id != key or report.owner_id != tech
+                        or report.revision <= handoff.base_revision):
+                    raise HTTPException(409, stale_draft)
+            return {"id": key, "technician": tech}
+        if current != (str(body.previous) if body.previous else None):
+            raise HTTPException(409, "A atribuição mudou. Atualize a intervenção.")
+        draft = db.scalar(select(Report).where(Report.charger_id == key, Report.owner_id == current,
+                          Report.id.in_(current_ordinary_drafts())).with_for_update()) if current else None
+        if handoff:
+            if not tech or not draft or draft.id != str(handoff.report_id) or draft.revision != handoff.base_revision:
+                raise HTTPException(409, stale_draft)
+            change_draft_owner(db, draft, tech, u)
+        elif draft:
+            raise HTTPException(409, "O técnico tem um rascunho. Transfira primeiro a propriedade do relatório.")
+        db.execute(delete(Assignment).where(Assignment.contract_id == key))
+        if tech:
+            db.add(Assignment(contract_id=key, user_id=tech))
+        audit(db, u, "intervention.share", key)
+        db.commit()
         return {"id": key, "technician": tech}

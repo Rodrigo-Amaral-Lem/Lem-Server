@@ -37,7 +37,7 @@ def test_promote_pinned_versions_without_changing_secrets(tmp_path, latest):
     )
     prepare(env, meta, out)
     result = out.read_text()
-    assert "LEM_LATEST_CLIENT_VERSION=0.7.0\n" in result
+    assert "LEM_LATEST_CLIENT_VERSION=0.8.0\n" in result
     assert "LEM_MIN_CLIENT_VERSION=0.6.1\n" in result
     assert "ADMIN_PASSWORD=PRIVATE_FIXTURE\n" in result
     assert out.stat().st_mode & 0o077 == 0

@@ -206,6 +206,10 @@ work-order grants, mixed orders with all three visit types, export identity and 
 creation. It also covers a commissioning draft that predates a future order and can be carried into
 a replacement order after cancellation. Run with the disposable PostgreSQL fixture as well as SQLite.
 
+`server/tests/test_field_handoffs.py` closes corrective and commissioning return visits while
+preserving the previous draft and photograph. It also checks owner eligibility for the exact
+visit, successful same-crew transfers and concurrent individual handoffs on both databases.
+
 ## Report, visit and import integrity
 
 Run `server/tests/test_visit_sync_integrity.py` on SQLite and on a disposable PostgreSQL database using the documented `LEM_TEST_POSTGRES_URL` fixture. The pair of backends covers competing report acknowledgements, closure during photo inspection, different crews revisiting a charger, partial order completion, catalogue lock ordering, UTF-8 payload limits, clock offsets, detached export history and import receipts. The tests establish transaction ordering with synchronization events.

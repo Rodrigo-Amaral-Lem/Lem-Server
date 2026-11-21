@@ -29,7 +29,7 @@ def has_started(order, today):
     return order.start <= today or any(item.state in ("closed", "invalid") for item in order.items)
 
 
-def assigned_items(user_id, *, writable=False, report_id=None):
+def assigned_items(user_id, *, writable=False, report_id=None, prospective_owner=False):
     query = (select(WorkItem.target).join(WorkAssignee, WorkAssignee.order_id == WorkItem.order_id)
              .join(WorkOrder, WorkOrder.id == WorkItem.order_id)
              .where(WorkAssignee.user_id == user_id, WorkItem.kind.in_(WORK_ITEM_KINDS), WorkItem.state != "cancelled"))
@@ -49,15 +49,18 @@ def assigned_items(user_id, *, writable=False, report_id=None):
     if report_id is not None:
         owned = aliased(Report)
         recovery = (select(WorkItemDraft.item_id).join(owned, owned.id == WorkItemDraft.report_id)
-                    .where(WorkItemDraft.report_id == report_id, owned.owner_id == user_id,
-                           owned.status == "draft").correlate_except(WorkItemDraft, owned))
+                    .where(WorkItemDraft.report_id == report_id, owned.status == "draft")
+                    .correlate_except(WorkItemDraft, owned))
+        if not prospective_owner:
+            recovery = recovery.where(owned.owner_id == user_id)
         return query.where(current | (WorkItem.report_id == report_id)
                            | WorkItem.id.in_(recovery))
     return query
 
 
-def eligible_owner(user_id, target):
-    return literal(target).in_(assigned_items(user_id, writable=True).correlate(User))
+def eligible_owner(user_id, target, report_id, *, recovery):
+    return literal(target).in_(assigned_items(user_id, writable=not recovery, report_id=report_id,
+                                               prospective_owner=recovery).correlate(User))
 
 
 def notice(db, order, recipients, kind, message, day=None):
@@ -78,10 +81,23 @@ def ordinary_drafts():
                                    ~Report.id.in_(select(ExpiredVisitDraft.report_id)))
 
 
+def resolved_visit_reports():
+    return (select(WorkItemDraft.report_id).join(WorkItem, WorkItem.id == WorkItemDraft.item_id)
+            .where(WorkItem.state != "pending"))
+
+
+def current_ordinary_drafts():
+    return ordinary_drafts().where(~Report.id.in_(resolved_visit_reports()))
+
+
+def recovery_draft_ids():
+    return resolved_visit_reports().union_all(select(ExpiredVisitDraft.report_id))
+
+
 def current_drafts(item):
     # Unbound drafts predate this visit or the association protocol. A recovery
     # binding must never claim the next visit's draft slot.
-    return ordinary_drafts().where(Report.charger_id == item.target,
+    return current_ordinary_drafts().where(Report.charger_id == item.target,
         (~Report.id.in_(select(WorkItemDraft.report_id))) |
         Report.id.in_(select(WorkItemDraft.report_id).where(WorkItemDraft.item_id == item.id)))
 
@@ -141,6 +157,8 @@ class Follow(BaseModel):
 
 
 def available(db):
+    # A recovery draft belongs to a resolved visit. The same intervention
+    # can be planned again and claim its own draft under the current visit.
     closed = select(Report.id).where(Report.charger_id == Charger.id, Report.status == "closed").exists()
     planned = select(WorkItem.id).where(WorkItem.target == Charger.id,
                                         WorkItem.state == "pending").exists()
@@ -198,8 +216,7 @@ def register(app, db_dep, user_dep, admin, audit):
         for item_id, rid in db.execute(select(WorkItemDraft.item_id, WorkItemDraft.report_id)
                 .where(WorkItemDraft.item_id.in_(item_ids))):
             recovery.setdefault(rid, []).append(item_id)
-        historical = (select(WorkItemDraft.report_id).join(WorkItem, WorkItem.id == WorkItemDraft.item_id)
-                      .where(WorkItem.state != "pending"))
+        historical = resolved_visit_reports()
         reports, recovered = {}, {}
         count = select(func.count(Photo.id)).where(Photo.report_id == Report.id).scalar_subquery()
         for rid, target, owner, name, revision, photo_count, archived in db.execute(
@@ -371,7 +388,8 @@ def register(app, db_dep, user_dep, admin, audit):
             raise HTTPException(422, "Indique o motivo na observação.")
         if item.state == "invalid" and item.resolved_by == u.id and item.note == note:
             return {"ok": True}
-        if order.revision != body.revision or item.state != "pending" or order.start > lisbon_now().date().isoformat():
+        today = lisbon_now().date().isoformat()
+        if order.revision != body.revision or item.state != "pending" or not has_started(order, today):
             raise HTTPException(409, "Atualize a ordem. Esta tarefa ainda não começou ou já mudou.")
         preserve_drafts(db, item)
         item.state, item.note, item.resolved_by, item.resolved_at = "invalid", note, u.id, now()

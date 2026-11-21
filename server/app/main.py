@@ -23,7 +23,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
-from sqlalchemy import select, update, delete, func
+from sqlalchemy import select, update, delete, func, literal
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
@@ -454,11 +454,13 @@ def create_app(url=None, bootstrap=True):
                           if correction and correction.state == "committed" else {})
         item = work_orders.bound_item(db, r.id)
         expired = db.get(work_orders.ExpiredVisitDraft, r.id) if not item and r.status == "draft" else None
+        recovery = r.status == "draft" and (expired or (item and item.state != "pending"))
         return {
             "id": r.id,
             "contract_id": contract_id,
             "work_item_id": item.id if item else expired.item_id if expired else None,
             **({"work_item_expired": True} if expired else {}),
+            **({"work_item_recovery": True} if recovery else {}),
             "station_id": charger.station_id,
             "presentation": contract_presentation(db, contract_id),
             "identifier": report_identifier({"snapshot": r.snapshot}),
@@ -766,7 +768,9 @@ def create_app(url=None, bootstrap=True):
                    ReportCorrection.editor_id.label("correction_editor"),
                    Report.snapshot["charger"]["external_id"].as_string().label("report_charger"),
                    Report.snapshot["contract"]["name"].as_string().label("report_contract"),
-                   Report.snapshot["intervention"]["reference"].as_string().label("reference"))
+                   Report.snapshot["intervention"]["reference"].as_string().label("reference"),
+                   ((Report.status == "draft") & Report.id.in_(work_orders.recovery_draft_ids()))
+                   .label("work_item_recovery"))
             .join(Charger, Charger.id == Report.charger_id)
             .outerjoin(ReportCorrection, ReportCorrection.id == Report.id)
             .where(visible, Charger.id.in_(work_orders.assigned_items(u.id, report_id=Report.id)) if limited else True)
@@ -783,6 +787,7 @@ def create_app(url=None, bootstrap=True):
                         "snapshot": {"charger": {"external_id": row.report_charger},
                                      "contract": {"name": row.report_contract}, "intervention": {"reference": row.reference}}}),
                     "status": row.status,
+                    **({"work_item_recovery": True} if row.work_item_recovery else {}),
                     "owner_id": row.owner_id,
                     "updated": row.updated,
                     "started": row.started,
@@ -1269,7 +1274,10 @@ def create_app(url=None, bootstrap=True):
             if planned and planned.kind in work_orders.INTERVENTION_KINDS:
                 order = db.get(work_orders.WorkOrder, planned.order_id)
                 if not work_orders.has_started(order, work_orders.lisbon_now().date().isoformat()):
-                    raise HTTPException(409, "A ordem desta intervenção ainda não começou.")
+                    return JSONResponse(status_code=409, content={
+                        "reason": "work_order_not_started",
+                        "detail": "A ordem desta intervenção ainda não começou.",
+                    })
         if r:
             # Authorize and check the revision before migrating. Validation below
             # atomically upgrades editable v6 data and checks the resulting schema.
@@ -1288,7 +1296,8 @@ def create_app(url=None, bootstrap=True):
             # One field draft per planned visit. Keep ordinary unplanned contract
             # work independent. Exact retries still use the existing report above.
             job = db.get(interventions.Intervention, charger.id)
-            if job and db.scalar(select(Report.id).where(Report.charger_id == charger.id).limit(1)):
+            if job and db.scalar(select(Report.id).where(Report.charger_id == charger.id,
+                                                         interventions.active_report()).limit(1)):
                 raise HTTPException(409, "Esta intervenção já tem um relatório. Abra o relatório existente.")
             if planned and db.scalar(work_orders.current_drafts(planned).limit(1)):
                 raise HTTPException(409, "Este ID já tem um rascunho. Consulte o proprietário na ordem. A cópia local foi conservada.")
@@ -1416,33 +1425,51 @@ def create_app(url=None, bootstrap=True):
         db.commit()
         return result
 
-    # List administrators plus technicians assigned to this report's contract.
+    def owner_choices(db, report):
+        cid = db.get(Charger, report.charger_id).contract_id
+        recovery = report.status == "draft" and db.scalar(
+            select(literal(report.id).in_(work_orders.recovery_draft_ids()))
+        )
+        return select(User).where(User.role.in_(("admin", "tech"))).where(
+            (User.role == "admin")
+            | User.id.in_(select(Assignment.user_id).where(Assignment.contract_id == cid))
+            | work_orders.eligible_owner(User.id, report.charger_id, report.id, recovery=recovery)
+        )
+
     @app.get("/api/reports/{rid}/owners")
     def report_owners(rid: str, u=Depends(admin), db=Depends(db_dep)):
-        r = report_access(db, u, rid)
-        cid = db.get(Charger, r.charger_id).contract_id
-        users = db.scalars(
-            select(User).where(User.role.in_(("admin", "tech"))).where(
-                (User.role == "admin")
-                | User.id.in_(select(Assignment.user_id).where(Assignment.contract_id == cid))
-                | work_orders.eligible_owner(User.id, r.charger_id)
-            )
-        )
+        users = db.scalars(owner_choices(db, report_access(db, u, rid)))
         return [
             {"id": x.id, "name": x.name, "label": x.name + " • " + x.email, "role": x.role}
             for x in users
         ]
 
-    # Serialize against edits/deletion, increment revision, and commit ownership history
-    # in the same transaction. A later transfer back still invalidates old offline revisions.
+    def change_draft_owner(db, report, owner_id, actor):
+        # Both ownership actions use the same revision advance and history record.
+        old_owner = report.owner_id
+        changed = db.execute(
+            update(Report)
+            .where(Report.id == report.id, Report.revision == report.revision,
+                   Report.owner_id == old_owner, Report.status == "draft")
+            .values(owner_id=owner_id, revision=report.revision + 1, updated=now())
+            .execution_options(synchronize_session=False)
+        )
+        if changed.rowcount != 1:
+            raise HTTPException(409, "Propriedade ou revisão alterada; tente novamente")
+        db.add(OwnershipTransfer(id=uid(), report_id=report.id, old_owner_id=old_owner,
+                                 new_owner_id=owner_id, actor_id=actor.id))
+        audit(db, actor, "report.transfer", report.id)
+        db.refresh(report)
+
     @app.post("/api/reports/{rid}/owner")
     def transfer_owner(rid: str, body: TransferInput, u=Depends(admin), db=Depends(db_dep)):
-        # Actor/target User locks precede contract/report locks, matching console
-        # credential changes. A deleted target cannot receive a new assignment.
+        # Lock the recipient before the catalogue. This serializes visit eligibility
+        # with planning and prevents transferring to a concurrently removed account.
         target = db.scalar(select(User).where(User.id == body.owner_id)
                            .with_for_update(read=True).execution_options(populate_existing=True))
         if not target or target.role not in ("admin", "tech"):
             raise HTTPException(422, "Proprietário inexistente")
+        lock_catalogue(db)
         r = report_access(db, u, rid)
         if db.get(ReportCorrection, rid):
             raise HTTPException(409, "Uma cópia de correção não pode ser transferida")
@@ -1460,30 +1487,11 @@ def create_app(url=None, bootstrap=True):
             raise HTTPException(409, "Só pode transferir rascunhos")
         if r.revision != body.base_revision:
             raise HTTPException(409, "Report alterado; consulte a versão atual antes de transferir")
-        accessible(db, target, db.get(Charger, r.charger_id).contract_id, target=r.charger_id, working=True)
+        if db.scalar(owner_choices(db, r).where(User.id == target.id)) is None:
+            raise HTTPException(403, "O técnico não tem acesso a este relatório ou à visita de origem.")
         if r.owner_id == target.id:
             return report_json(db, r)
-        old = r.owner_id
-        changed = db.execute(
-            update(Report)
-            .where(
-                Report.id == rid,
-                Report.revision == body.base_revision,
-                Report.owner_id == old,
-                Report.status == "draft",
-            )
-            .values(owner_id=target.id, revision=body.base_revision + 1, updated=now())
-            .execution_options(synchronize_session=False)
-        )
-        if changed.rowcount != 1:
-            raise HTTPException(409, "Propriedade ou revisão alterada; tente novamente")
-        db.add(
-            OwnershipTransfer(
-                id=uid(), report_id=rid, old_owner_id=old, new_owner_id=target.id, actor_id=u.id
-            )
-        )
-        audit(db, u, "report.transfer", rid)
-        db.refresh(r)
+        change_draft_owner(db, r, target.id, u)
         result = report_json(db, r)
         db.commit()
         return result
@@ -1856,6 +1864,6 @@ def create_app(url=None, bootstrap=True):
             db.close()
         return ExportFileResponse(spool, size, doc["identifier"])
 
-    interventions.register(app, db_dep, user_dep, admin, audit, visible_stations, file_bytes)
+    interventions.register(app, db_dep, user_dep, admin, audit, visible_stations, file_bytes, change_draft_owner)
     work_orders.register(app, db_dep, user_dep, admin, audit)
     return app

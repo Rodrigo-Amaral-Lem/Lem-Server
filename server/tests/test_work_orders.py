@@ -320,3 +320,28 @@ def test_historical_draft_recovery_uses_server_save_time(backend, request):
     assert client.get("/api/reports/" + later, headers=tech).status_code == 403
     recovered, = client.get("/api/work-orders", headers=tech).json()["orders"][0]["items"][0]["drafts"]
     assert recovered["id"] == earlier
+
+
+@pytest.mark.parametrize("backend", ["setup", "postgres_setup"])
+def test_impediment_uses_started_state_after_clock_moves_back(backend, request, monkeypatch):
+    client, admin, contract, _ = request.getfixturevalue(backend)
+    upload(client, admin, contract["id"], True, xlsx(("LIS-1", "LIS-2"))).raise_for_status()
+    uid, tech = account(client, admin, "campo")
+    targets = [row["target"] for row in client.get("/api/work-order-candidates", headers=admin).json()]
+    start = work_orders.lisbon_now()
+    monkeypatch.setattr(work_orders, "lisbon_now", lambda: start - timedelta(days=1))
+    oid = str(uuid4())
+    day = start.date().isoformat()
+    client.put(f"/api/work-orders/{oid}", headers=admin, json=dict(
+        id=oid, revision=0, start=day, due=day, technicians=[uid], targets=targets)).raise_for_status()
+    items = client.get("/api/work-orders", headers=tech).json()["orders"][0]["items"]
+    def impede(item, revision):
+        return client.put(f"/api/work-orders/{oid}/items/{item['id']}/invalid", headers=tech,
+                          json={"note": "Acesso suspenso / no access", "revision": revision})
+    assert impede(items[0], 1).status_code == 409
+    monkeypatch.setattr(work_orders, "lisbon_now", lambda: start)
+    impede(items[0], 1).raise_for_status()
+    monkeypatch.setattr(work_orders, "lisbon_now", lambda: start - timedelta(days=1))
+    assert client.get("/api/work-orders", headers=tech).json()["orders"][0]["started"]
+    impede(items[1], 2).raise_for_status()
+    assert client.get("/api/work-orders", headers=tech).json()["orders"][0]["completed"]
