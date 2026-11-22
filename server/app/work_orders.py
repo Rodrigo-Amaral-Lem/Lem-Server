@@ -18,6 +18,7 @@ from .work_order_retention import cancellation_cutoff
 
 INTERVENTION_KINDS = ("corrective", "commissioning")
 WORK_ITEM_KINDS = ("preventive", *INTERVENTION_KINDS)
+RESULT_STATES = ("closed", "invalid")
 
 
 def lisbon_now():
@@ -25,8 +26,10 @@ def lisbon_now():
 
 
 def has_started(order, today):
-    # Earlier releases permitted postponing an order after a recorded result.
-    return order.start <= today or any(item.state in ("closed", "invalid") for item in order.items)
+    # A preventive report may independently satisfy an item before the crew starts.
+    return order.start <= today or any(
+        item.state in RESULT_STATES and not item.resolved_before_start for item in order.items
+    )
 
 
 def assigned_items(user_id, *, writable=False, report_id=None, prospective_owner=False):
@@ -44,7 +47,7 @@ def assigned_items(user_id, *, writable=False, report_id=None, prospective_owner
     if writable:
         completed_item = aliased(WorkItem)
         has_result = select(completed_item.id).where(completed_item.order_id == WorkOrder.id,
-                    completed_item.state.in_(("closed", "invalid"))).exists()
+                     completed_item.state.in_(RESULT_STATES), completed_item.resolved_before_start.is_(False)).exists()
         return query.where(current, (WorkOrder.start <= lisbon_now().date().isoformat()) | has_result)
     if report_id is not None:
         owned = aliased(Report)
@@ -114,6 +117,12 @@ def bound_item(db, rid):
                      .order_by(WorkItem.resolved_at.asc().nulls_last(), WorkItem.id).limit(1))
 
 
+def require_editable_visit(db, report_id):
+    item = bound_item(db, report_id)
+    if (item and item.state != "pending") or db.get(ExpiredVisitDraft, report_id):
+        raise HTTPException(403, "A visita de origem terminou. O rascunho está disponível para consulta.")
+
+
 def preserve_drafts(db, item):
     for rid in db.scalars(ordinary_drafts().where(Report.charger_id == item.target,
                            ~Report.id.in_(select(WorkItemDraft.report_id)))):
@@ -128,6 +137,7 @@ def accept_closure(db, charger, report_id, actor, timestamp):
         raise HTTPException(409, "A visita de origem já terminou. O report foi conservado.")
     if item:
         order = db.get(WorkOrder, item.order_id)
+        item.resolved_before_start = not has_started(order, lisbon_now().date().isoformat())
         preserve_drafts(db, item)
         item.state, item.report_id = "closed", report_id
         item.resolved_by, item.resolved_at = actor.id, timestamp
@@ -204,7 +214,8 @@ def register(app, db_dep, user_dep, admin, audit):
         targets = {i.target for o in orders for i in o.items}
         references = dict(db.execute(select(Contract.id, Contract.name).where(Contract.id.in_(
             {i.contract_id for o in orders for i in o.items if i.kind in INTERVENTION_KINDS}))).all())
-        chargers = {c.id: c for c in db.scalars(select(Charger).options(selectinload(Charger.contract_note)).where(Charger.id.in_(targets),
+        chargers = {c.id: c for c in db.scalars(select(Charger).options(
+                    selectinload(Charger.station), selectinload(Charger.contract_note)).where(Charger.id.in_(targets),
                     attached_charger(), ~Charger.contract_id.in_(select(ContractTrash.contract_id)))).unique()}
         pending = {i.target for o in orders for i in o.items if i.state == "pending" and i.target in chargers}
         closed_ids = {i.report_id for o in orders for i in o.items if i.report_id}
@@ -239,6 +250,7 @@ def register(app, db_dep, user_dep, admin, audit):
                 rows.append(dict(id=i.id, target=i.target, kind=i.kind, contract_id=i.contract_id,
                         contract=i.contract_name, reference=references.get(i.contract_id), client=i.client,
                         external_id=i.external_id, details=c.details if c else {},
+                        station_updated=c.station.updated if c and c.station else None,
                         contract_notes=c.contract_note.text if c and c.contract_note else "",
                         notes_revision=c.contract_note.revision if c and c.contract_note else 0,
                         available=(i.report_id in existing and i.contract_id not in trashed) if i.state == "closed" else c is not None,
@@ -343,7 +355,9 @@ def register(app, db_dep, user_dep, admin, audit):
             raise HTTPException(409, "Só pode cancelar uma ordem futura. Atualize a ordem.")
         timestamp = now()
         for item in order.items:
-            if item.state == "pending":
+            # An early independent result keeps its report ID and history, but
+            # no visit in a cancelled order should grant crew access to it.
+            if item.state == "pending" or item.resolved_before_start:
                 item.state = "cancelled"
         db.add(WorkOrderCancellation(order_id=order.id, cancelled_at=timestamp, actor_id=u.id))
         db.execute(delete(WorkNotice).where(WorkNotice.order_id == order.id, WorkNotice.kind.in_(["assigned", "start"])))

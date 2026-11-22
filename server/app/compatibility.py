@@ -11,7 +11,7 @@ import os
 import re
 from urllib.parse import urlparse
 
-VERSION = "0.8.0"
+VERSION = "0.9.0"
 # Earlier clients display a commissioning task as preventive in a work order.
 MINIMUM_CLIENT = "0.6.1"
 HEADER = "X-Lem-Client-Version"

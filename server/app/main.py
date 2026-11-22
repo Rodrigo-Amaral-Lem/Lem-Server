@@ -378,6 +378,14 @@ def create_app(url=None, bootstrap=True):
             raise HTTPException(423, "Contrato apagado; aguarda recuperação pelo administrador. Dados locais conservados.")
         return c
 
+    def raise_deleted_report(db, user, tombstone):
+        charger = db.get(Charger, tombstone.charger_id)
+        detail = corrections.replaced_detail(db, tombstone.id)
+        # A correction moves the exact work-item result to its new UUID.
+        visible_id = detail["replacement_id"] if isinstance(detail, dict) else tombstone.id
+        accessible(db, user, charger.contract_id, target=charger.id, report_id=visible_id)
+        raise HTTPException(410, detail)
+
     # Common read/write gate, including permanent deletion markers.
     # Write access requires the current owner even when the caller is an administrator.
     def report_access(db, user, rid, write=False):
@@ -385,16 +393,12 @@ def create_app(url=None, bootstrap=True):
         if not r:
             tombstone = db.get(DeletedReport, rid)
             if tombstone:
-                charger = db.get(Charger, tombstone.charger_id)
-                accessible(db, user, charger.contract_id, target=charger.id, report_id=rid)
-                raise HTTPException(410, corrections.replaced_detail(db, rid))
+                raise_deleted_report(db, user, tombstone)
             raise HTTPException(404, "Report inexistente")
         charger = db.get(Charger, r.charger_id)
         accessible(db, user, charger.contract_id, target=charger.id, report_id=rid, working=write)
         if write and r.status == "draft":
-            item = work_orders.bound_item(db, rid)
-            if (item and item.state != "pending") or db.get(work_orders.ExpiredVisitDraft, rid):
-                raise HTTPException(403, "A visita de origem terminou. O rascunho está disponível para consulta.")
+            work_orders.require_editable_visit(db, rid)
         corrections.gate(db, user, rid)
         if write and r.owner_id != user.id:
             raise HTTPException(
@@ -1247,10 +1251,14 @@ def create_app(url=None, bootstrap=True):
             Assignment.user_id == u.id, Assignment.contract_id == charger.contract_id))
         if body.base_revision == 0 or body.status == "closed" or body.work_item_id or not full_grant:
             lock_catalogue(db)
+        # A closed visit can still authorize its correction tombstone even
+        # though its crew can no longer write new reports for that visit.
+        if tombstone := db.get(DeletedReport, rid):
+            raise_deleted_report(db, u, tombstone)
         contract = accessible(db, u, charger.contract_id, target=charger.id, report_id=rid, working=True)
         charger = db.scalar(select(Charger).where(Charger.id == body.charger_id).with_for_update())
-        if db.get(DeletedReport, rid):
-            raise HTTPException(410, corrections.replaced_detail(db, rid))
+        if tombstone := db.get(DeletedReport, rid):
+            raise_deleted_report(db, u, tombstone)
         # Serialize answer/closure validation with photo writes and ownership changes.
         r = db.scalar(select(Report).where(Report.id == rid).with_for_update()
                       .execution_options(populate_existing=True))
@@ -1502,12 +1510,16 @@ def create_app(url=None, bootstrap=True):
     def delete_report(rid: str, base_revision: int, correction_only: bool = False, u=Depends(user_dep), db=Depends(db_dep)):
         uuid_check(rid)
         corrections.lock_report_users(db, rid)
+        # Serialize technician deletion with planning and resolution of the
+        # originating visit. A cached report revision can outlive the visit.
+        if u.role != "admin":
+            lock_catalogue(db)
         r = db.get(Report, rid) or db.get(DeletedReport, rid)
         if not r:
             raise HTTPException(404, "Report inexistente")
         # Contract -> charger -> report matches retention and console mutations.
         charger = db.get(Charger, r.charger_id)
-        accessible(db, u, charger.contract_id, target=charger.id, working=True)
+        accessible(db, u, charger.contract_id, target=charger.id, report_id=rid, working=True)
         charger = corrections.lock_charger(db, r.charger_id)
         r = db.scalar(
             select(Report)
@@ -1523,6 +1535,8 @@ def create_app(url=None, bootstrap=True):
             )
         if isinstance(r, DeletedReport):
             return {"id": rid, "deleted": True}
+        if u.role != "admin":
+            work_orders.require_editable_visit(db, rid)
         correction = corrections.gate(db, u, rid)
         if correction_only and (not correction or correction.state != "editing"):
             raise HTTPException(409, "A correção já foi concluída; o report final foi conservado")

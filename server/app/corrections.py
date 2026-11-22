@@ -58,10 +58,18 @@ def metadata(correction):
 
 
 def replaced_detail(db, rid):
-    replacement = db.scalar(select(ReportCorrection.id).where(
-        ReportCorrection.source_id == rid, ReportCorrection.state == "committed"))
+    # An offline client can miss more than one successive correction.
+    replacement = rid
+    seen = {rid}
+    while True:
+        next_id = db.scalar(select(ReportCorrection.id).where(
+            ReportCorrection.source_id == replacement, ReportCorrection.state == "committed"))
+        if not next_id or next_id in seen:
+            break
+        seen.add(next_id)
+        replacement = next_id
     return ({"message": "Report substituído por uma correção do administrador; conserve alterações locais pendentes",
-             "reason": "report_replaced", "replacement_id": replacement} if replacement
+             "reason": "report_replaced", "replacement_id": replacement} if replacement != rid
             else "Report apagado definitivamente")
 
 

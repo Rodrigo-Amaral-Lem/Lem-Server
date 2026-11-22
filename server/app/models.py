@@ -300,6 +300,7 @@ class WorkItem(Base):
     note: Mapped[str] = mapped_column(Text, default="")
     resolved_by: Mapped[str | None] = mapped_column(String(36))
     resolved_at: Mapped[str | None] = mapped_column(String(50))
+    resolved_before_start: Mapped[bool] = mapped_column(default=False, server_default=text("false"))
 
 
 class WorkOrderCancellation(Base):
@@ -434,21 +435,24 @@ class Audit(Base):
     created: Mapped[str] = mapped_column(String(50), default=now)
 
 
-def migrate_correction_identity(engine):
-    """Add the private conflict baseline without rewriting existing corrections."""
+def add_schema_column(engine, table, column, definition):
+    """Add a column to an existing installation while other workers can start."""
     with engine.begin() as connection:
-        table = ReportCorrection.__tablename__
-        if any(c["name"] == "identity_baseline" for c in inspect(connection).get_columns(table)):
+        if any(c["name"] == column for c in inspect(connection).get_columns(table)):
             return
         if connection.dialect.name == "postgresql":
             # A second worker may have added the column after our schema read.
-            connection.exec_driver_sql(
-                "ALTER TABLE report_corrections ADD COLUMN IF NOT EXISTS identity_baseline JSON")
+            connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {definition}")
         else:
             # SQLite lacks ADD COLUMN IF NOT EXISTS. Recheck under its writer lock.
             connection.exec_driver_sql("BEGIN IMMEDIATE")
-            if not any(c["name"] == "identity_baseline" for c in inspect(connection).get_columns(table)):
-                connection.exec_driver_sql("ALTER TABLE report_corrections ADD COLUMN identity_baseline JSON")
+            if not any(c["name"] == column for c in inspect(connection).get_columns(table)):
+                connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def migrate_correction_identity(engine):
+    """Add the private conflict baseline without rewriting existing corrections."""
+    add_schema_column(engine, ReportCorrection.__tablename__, "identity_baseline", "JSON")
 
 
 def migrate_stations(engine):
@@ -499,6 +503,8 @@ def database(url=None):
 
     Base.metadata.create_all(engine)
     migrate_correction_identity(engine)
+    # Old results retain the started-order interpretation used by earlier releases.
+    add_schema_column(engine, WorkItem.__tablename__, "resolved_before_start", "BOOLEAN NOT NULL DEFAULT FALSE")
     migrate_stations(engine)
     clean_existing_station_data(engine)
     with engine.begin() as connection:

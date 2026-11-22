@@ -2,7 +2,7 @@
 """Return visits, report-scoped owners and the atomic individual handoff."""
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import BytesIO
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -14,6 +14,7 @@ from sqlalchemy import select
 from app import work_orders
 from app.models import OwnershipTransfer
 from test_postgres_branding import postgres_setup
+from test_report_corrections import body as correction_body
 from test_visit_sync_integrity import backend, plan, report
 from test_work_orders import account
 from test_workflow import add_signature, setup, upload, xlsx
@@ -119,6 +120,94 @@ def test_return_visit_preserves_old_draft_and_finishes_new_report(field, kind):
     assert recovered["work_item_id"] == old_item and recovered["work_item_recovery"]
     assert recovered["payload"]["answers"]["FIN.03"]["notes"] == OBSERVATION
     assert api.get(photo, headers=first).content == original
+
+
+@pytest.mark.parametrize("kind", ["corrective", "commissioning"])
+def test_stale_owner_cannot_delete_impeded_intervention_draft(field, kind):
+    api, admin, charger, _ = field
+    owner_id, owner = account(api, admin, "individual-and-crew")
+    partner_id, partner = account(api, admin, "partner")
+    target, _ = intervention(api, admin, charger, kind, owner_id)
+    order, item, _ = plan(api, admin, [owner_id, partner_id], target)
+    path = f"/api/reports/{uuid4()}"
+    draft = ok(api.put(path, headers=owner, json=draft_body(target, item)))
+    photo, original = add_photo(api, owner, path)
+
+    mark_impeded(api, order, item, partner)
+    params = {"base_revision": draft["revision"]}
+    rejected = api.delete(path, headers=owner, params=params)
+    assert rejected.status_code == 403
+    recovered = ok(api.get(path, headers=owner))
+    assert recovered["work_item_recovery"] and recovered["revision"] == draft["revision"]
+    assert recovered["payload"]["answers"]["FIN.03"]["notes"] == OBSERVATION
+    assert api.get(photo, headers=owner).content == original
+
+    assert ok(api.delete(path, headers=admin, params=params))["deleted"]
+    assert api.get(path, headers=admin).status_code == 410
+
+
+def test_early_preventive_closure_keeps_mixed_order_scheduled(field, monkeypatch):
+    api, admin, charger, _ = field
+    owner_id, owner = account(api, admin, "mixed-crew")
+    corrective, _ = intervention(api, admin, charger, "corrective")
+    commissioning, _ = intervention(api, admin, charger, "commissioning")
+    tomorrow = work_orders.lisbon_now() + timedelta(days=1)
+    start = tomorrow.date().isoformat()
+    order_id = str(uuid4())
+    ok(api.put(f"/api/work-orders/{order_id}", headers=admin, json={
+        "id": order_id, "revision": 0, "start": start, "due": start,
+        "technicians": [owner_id], "targets": [charger["id"], corrective, commissioning],
+    }))
+
+    rid = str(uuid4())
+    path = f"/api/reports/{rid}"
+    preventive = draft_body(charger["id"])
+    ok(api.put(path, headers=admin, json=preventive))
+    add_signature(api, admin, rid, preventive["payload"])
+    ok(api.put(path, headers=admin, json={**preventive, "base_revision": 1, "status": "closed"}))
+
+    order, = ok(api.get("/api/work-orders", headers=owner))["orders"]
+    assert order["start"] == start and not order["started"]
+    assert order["items"][0]["report_id"] == rid
+    drafts = [(f"/api/reports/{uuid4()}", draft_body(item["target"], item["id"])) for item in order["items"][1:]]
+    for draft_path, payload in drafts:
+        assert api.put(draft_path, headers=owner, json=payload).status_code == 403
+    monkeypatch.setattr(work_orders, "lisbon_now", lambda: tomorrow)
+    assert ok(api.get("/api/work-orders", headers=owner))["orders"][0]["started"]
+    for draft_path, payload in drafts:
+        assert ok(api.put(draft_path, headers=owner, json=payload))["work_item_id"] == payload["work_item_id"]
+
+
+@pytest.mark.parametrize("kind", ["corrective", "commissioning"])
+def test_order_crew_can_resolve_corrected_uuid_after_missing_two_corrections(field, kind):
+    api, admin, charger, _ = field
+    past_id, past_crew = account(api, admin, "past-crew")
+    current_id, current_crew = account(api, admin, "current-crew")
+    target, _ = intervention(api, admin, charger, kind)
+    old_order, old_item, _ = plan(api, admin, [past_id], target)
+    mark_impeded(api, old_order, old_item, past_crew)
+    _, item, _ = plan(api, admin, [current_id], target)
+    original_id = str(uuid4())
+    path = f"/api/reports/{original_id}"
+    payload = draft_body(target, item)
+    ok(api.put(path, headers=current_crew, json=payload))
+    add_signature(api, current_crew, original_id, payload["payload"])
+    closing = {**payload, "base_revision": 1, "status": "closed"}
+    replaced = ok(api.put(path, headers=current_crew, json=closing))
+    desktop = {**admin, "X-Lem-Client-Platform": "windows"}
+    for _ in range(2):
+        working = ok(api.post(f"/api/reports/{replaced['id']}/corrections", headers=desktop, json={
+            "id": str(uuid4()), "base_revision": replaced["revision"],
+        }))
+        replaced = ok(api.post(f"/api/reports/{working['id']}/correction/commit", headers=desktop,
+                               json=correction_body(working)))
+
+    assert ok(api.get(f"/api/reports/{replaced['id']}", headers=current_crew))["status"] == "closed"
+    stale_reads = [api.get(path + suffix, headers=current_crew) for suffix in ("", "/exists")]
+    for response in [*stale_reads, api.put(path, headers=current_crew, json=closing)]:
+        assert response.status_code == 410
+        assert response.json()["detail"]["replacement_id"] == replaced["id"]
+    assert api.get(path + "/exists", headers=past_crew).status_code == 403
 
 
 def test_transfer_choices_use_the_exact_bound_visit(field):
