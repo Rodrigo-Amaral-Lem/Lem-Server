@@ -80,7 +80,7 @@ are enabled only when `LEM_API_DOCS=1`.
 | GET `/api/contracts/{cid}/chargers` | Contract memberships with the current central station details and report summaries |
 | GET / PUT `/api/contracts/{cid}/chargers/{charger_id}/notes` | Read current membership notes, or save them as an administrator using `notes` and `base_revision`. Android and desktop use the same permissions. |
 | GET `/api/stations` | One record per PCVE across all active assigned contracts for technicians, or the entire catalogue for administrators |
-| GET `/api/stations/{sid}/reports` | Accessible active-contract report summaries, including history of removed memberships; correction visibility follows the report rules |
+| GET `/api/stations/{sid}/reports` | Readable report summaries for a visible PCVE, including removed memberships and reports granted through individual work-order visits. Trash and correction visibility follow report access rules. |
 | DELETE `/api/contracts/{cid}/chargers/{charger_id}` | Administrator removes only the contract membership. Repeated requests are idempotent; reimporting restores the membership UUID |
 | POST `/api/stations/import`; PATCH `/api/stations/{sid}` | Desktop administrator Excel preview and atomic import, or revision-checked edit |
 | GET `/api/companies/{company}/import-profile` | Saved mapping |
@@ -274,9 +274,13 @@ sorted by photo ID. The API returns 409 on a mismatch or a missing digest for a 
 An empty list hashes to the SHA-256 of an empty string. Retrying a completed delete returns its
 tombstone acknowledgement.
 
-The creator follows automatically. Other administrators subscribe through `PUT /api/work-orders/{id}/follow`. Each installation reads its signed-in user's inbox at `GET /api/work-order-notices/{device}` and acknowledges individual notifications with a PUT to the appended notice UUID. Start notices are returned during the Lisbon start day from 07:00 inclusive to 20:00 exclusive. Old unacknowledged start dates expire. Assignment, impediment and completion events survive offline periods.
+The creator follows automatically. Other administrators subscribe through `PUT /api/work-orders/{id}/follow`. A follower can unsubscribe after completion. Each installation reads its signed-in user's inbox at `GET /api/work-order-notices/{device}` and acknowledges individual notifications with a PUT to the appended notice UUID. Start notices are returned during the Lisbon start day from 07:00 inclusive to 20:00 exclusive. Old unacknowledged start dates expire. Assignment, impediment and completion events survive offline periods.
 
 ### Visit writes and exports in 0.5.4
+
+A pending visit cannot be marked invalid while its contract is in the trash or its PCVE membership is detached. Creating a report against a temporarily detached membership returns HTTP 409 with `reason: "pcve_membership_detached"`. After reattachment, the client can retry the original report and visit subject to the usual ownership and revision checks.
+
+Station edits and standard imports preserve decoded Unicode. Set `repair_legacy_cedillas: true` in an import mapping only for a verified legacy workbook whose text uses Ý or ý in place of cedillas.
 
 Include `work_item_id` on the first and subsequent PUTs from an order. The server stores the original binding in the report transaction. Only the current pending visit can be fulfilled. A prior visit's recovery draft remains available to its eligible owner. Started orders retain their start date. Uploads, closure, membership notes and Excel imports acquire the catalogue lock before contract and membership locks. Each report PUT returns the state it accepted, including the attachment list.
 

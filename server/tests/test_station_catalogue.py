@@ -105,6 +105,33 @@ def test_direct_import_then_contract_import_keeps_one_station(setup):
     assert read(client, admin)[0] == canonical
 
 
+def test_live_station_edits_preserve_unicode_and_acknowledge_exact_retries(setup):
+    client, admin, _, _ = setup
+    windows = {**admin, "X-Lem-Client-Platform": "windows"}
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Parque"
+    sheet.append(["Identificador", "Fabricante"])
+    imported_manufacturer = "Ýa Energy / Ligação Âncora"
+    sheet.append(["PCVE-01", imported_manufacturer])
+    data = BytesIO()
+    workbook.save(data)
+    mapping = {"sheet": "Parque", "columns": {"external_id": "Identificador", "manufacturer": "Fabricante"}}
+    station_import(client, windows, data.getvalue(), commit=True, mapping=mapping).raise_for_status()
+    station, = read(client, windows)
+    assert station["details"]["manufacturer"] == imported_manufacturer
+    assert station["details"]["source"]["Fabricante"] == imported_manufacturer
+    manufacturer = "MÝA Charging / Ação na Âncora e ýgua"
+    body = {"base_updated": station["updated"], "fields": {"manufacturer": manufacturer}}
+    endpoint = f"/api/stations/{station['id']}"
+    first = client.patch(endpoint, headers=windows, json=body)
+    first.raise_for_status()
+    retry = client.patch(endpoint, headers=windows, json=body)
+    assert retry.status_code == 200 and retry.json() == first.json()
+    current, = read(client, windows)
+    assert current["details"]["manufacturer"] == manufacturer
+
+
 def test_technician_reads_one_station_per_accessible_assignment(setup):
     client, admin, first, _ = setup
     cid = first["id"]
@@ -239,7 +266,8 @@ def test_import_and_upgrade_clean_live_fields_and_preserve_snapshots(setup):
     sheet.append(["PCVE-FIXO", "ESTRADA DOS CALIÝOS, EstaÝão", "Local excluído", "OUTRO", "37.0"])
     output = BytesIO()
     book.save(output)
-    mapping = {"sheet": "Parque", "columns": {"external_id": "ID", "address": "Morada",
+    mapping = {"sheet": "Parque", "repair_legacy_cedillas": True,
+               "columns": {"external_id": "ID", "address": "Morada",
                "location": "Localização / nome do local", "extra.ID do site": "ID do site", "latitude": "Latitude"}}
     response = client.post(f"/api/contracts/{contract['id']}/import", headers=admin,
                            files={"file": ("dados.xlsx", output.getvalue())},

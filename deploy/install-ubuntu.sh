@@ -86,7 +86,7 @@ fi
 lem_db_password=$(openssl rand -hex 24)
 lem_admin_password=$(openssl rand -hex 24)
 # noclobber makes creation atomic and prevents replacement of an existing configuration.
-(set -o noclobber; printf 'LEM_DOMAIN=%s\nPOSTGRES_PASSWORD=%s\nADMIN_EMAIL=%s\nADMIN_PASSWORD=%s\nLEM_MIN_CLIENT_VERSION=0.9.1\nLEM_LATEST_CLIENT_VERSION=0.9.2\nLEM_UPDATE_URL=\n' "$lem_domain" "$lem_db_password" "$lem_admin_email" "$lem_admin_password" > .env)
+(set -o noclobber; printf 'LEM_DOMAIN=%s\nPOSTGRES_PASSWORD=%s\nADMIN_EMAIL=%s\nADMIN_PASSWORD=%s\nLEM_MIN_CLIENT_VERSION=0.9.1\nLEM_LATEST_CLIENT_VERSION=0.10.0\nLEM_UPDATE_URL=\n' "$lem_domain" "$lem_db_password" "$lem_admin_email" "$lem_admin_password" > .env)
 chmod 600 .env
 python3 - "$lem_admin_name" <<'PY'
 import sys

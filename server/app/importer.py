@@ -293,7 +293,7 @@ def parse(data, mapping, *, contract_notes=True):
                 for i, label in enumerate(header)
                 if label and label not in ignored_headers and label not in note_headers and not obsolete_station_field(label)
             }
-            rec = clean_station_details(rec)
+            rec = clean_station_details(rec, repair_legacy_cedillas=mapping.get("repair_legacy_cedillas") is True)
             # Preview the same spelling that the live station will display, even
             # when a custom column name supplied the postal address.
             for field in ("address", "region", "manufacturer", "energy_supply"):

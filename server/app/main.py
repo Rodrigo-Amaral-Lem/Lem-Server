@@ -922,7 +922,9 @@ def create_app(url=None, bootstrap=True):
                         .where(ContractTrash.contract_id == Contract.id).exists())
                  .order_by(Report.started.desc(), Report.id))
         if u.role != "admin":
-            query = query.join(Assignment, Assignment.contract_id == Contract.id).where(Assignment.user_id == u.id)
+            direct = select(Assignment.contract_id).where(Assignment.user_id == u.id)
+            visit_grants = work_orders.assigned_items(u.id, report_id=Report.id).correlate(Report)
+            query = query.where(Contract.id.in_(direct) | Charger.id.in_(visit_grants))
         allow_corrections = u.role == "admin" and db.info.get("client_platform") in ("windows", "linux")
         visible = (ReportCorrection.id.is_(None) | (ReportCorrection.state != "editing"))
         if allow_corrections:
@@ -1310,7 +1312,10 @@ def create_app(url=None, bootstrap=True):
             if planned and db.scalar(work_orders.current_drafts(planned).limit(1)):
                 raise HTTPException(409, "Este ID já tem um rascunho. Consulte o proprietário na ordem. A cópia local foi conservada.")
             if db.get(DetachedCharger, charger.id):
-                raise HTTPException(409, "Este PCVE foi retirado do contrato. O rascunho local foi conservado.")
+                return JSONResponse(status_code=409, content={
+                    "reason": "pcve_membership_detached",
+                    "detail": "Este PCVE foi retirado do contrato. O rascunho local foi conservado.",
+                })
             legacy_closed = body.checklist_version == 6 and (body.status == "closed" or body.frozen_history)
             if body.checklist_version != TEMPLATE["version"] and not legacy_closed:
                 raise HTTPException(409, "A checklist mudou. Crie um novo report; o rascunho antigo foi conservado para consulta")

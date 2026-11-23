@@ -26,7 +26,7 @@ def test_lifecycle_and_scoped_access(backend, request, monkeypatch):
     local = datetime(2026, 7, 1, 6, 59, tzinfo=ZoneInfo("Europe/Lisbon"))
     monkeypatch.setattr(work_orders, "lisbon_now", lambda: local)
     uid, tech = account(client, admin, "joao")
-    _, other = account(client, admin, "rui")
+    other_id, other = account(client, admin, "rui")
     _, observer = account(client, admin, "ana", "admin")
     _, silent = account(client, admin, "ines", "admin")
     second = client.post("/api/contracts", headers=admin, json={
@@ -99,6 +99,11 @@ def test_lifecycle_and_scoped_access(backend, request, monkeypatch):
     assert [r["state"] for r in progress["items"]] == ["pending","closed"]
     assert progress["items"][1]["report_id"] == rid and not progress["completed"]
     assert client.get(report, headers=tech).status_code == 200
+    history = "/api/stations/" + progress["items"][1]["station_id"] + "/reports"
+    for reader_id in (uid, other_id):
+        client.put("/api/contracts/" + first["id"] + "/users/" + reader_id, headers=admin).raise_for_status()
+    assert [entry["id"] for entry in client.get(history, headers=tech).json()] == [rid]
+    assert client.get(history, headers=other).json() == []
     assert client.put("/api/reports/" + str(uuid4()), headers=tech, json=body).status_code == 403
     invalid = url + "/items/" + progress["items"][0]["id"] + "/invalid"
     note = {"revision":progress["revision"], "note":"Ângulo inacessível. Ação adiada — gate locked."}
@@ -110,9 +115,55 @@ def test_lifecycle_and_scoped_access(backend, request, monkeypatch):
     assert final["items"][0]["report_id"] is None
     assert {n["kind"] for n in notices(admin)} == {"completed","invalid"}
     assert len(notices(observer)) == 2 and notices(silent) == []
+    assert client.put(url + "/follow", headers=silent, json={"following": True}).status_code == 409
+    for _ in range(2):
+        assert client.put(url + "/follow", headers=observer, json={"following": False}).json() == {"following": False}
+    assert not order(observer)["following"] and notices(observer) == []
+    assert order(admin)["following"] and len(notices(admin)) == 2
     assert a in [c["target"] for c in client.get("/api/work-order-candidates", headers=admin).json()]
     client.put("/api/contracts/" + first["id"] + "/users/" + uid, headers=admin).raise_for_status()
     assert len(client.get(listing, headers=tech).json()) == 2
+
+
+@pytest.mark.parametrize("backend", ["setup", "postgres_setup"])
+def test_unavailable_membership_preserves_pending_visit(backend, request):
+    client, admin, contract, _ = request.getfixturevalue(backend)
+    uid, tech = account(client, admin, "field")
+    cid = contract["id"]
+    workbook = xlsx(("PCVE-ÂNCORA",))
+    upload(client, admin, cid, True, workbook).raise_for_status()
+    target, = client.get("/api/work-order-candidates", headers=admin).json()
+    oid = str(uuid4())
+    url = f"/api/work-orders/{oid}"
+    today = work_orders.lisbon_now().date().isoformat()
+    client.put(url, headers=admin, json=dict(id=oid, revision=0, start=today,
+               due=today, technicians=[uid], targets=[target["target"]])).raise_for_status()
+
+    def current():
+        order, = client.get("/api/work-orders", headers=tech).json()["orders"]
+        item, = order["items"]
+        return order, item
+
+    order, item = current()
+    invalid = f"{url}/items/{item['id']}/invalid"
+    note = {"revision": order["revision"], "note": "Impedimento à ligação / gate locked"}
+    client.post(f"/api/contracts/{cid}/trash", headers=admin, json={"confirmation": "APAGAR"}).raise_for_status()
+    assert client.put(invalid, headers=tech, json=note).status_code == 423
+    trashed, item = current()
+    assert trashed["revision"] == order["revision"] and item["state"] == "pending" and not item["available"]
+    client.post(f"/api/contracts/{cid}/restore", headers=admin).raise_for_status()
+
+    client.delete(f"/api/contracts/{cid}/chargers/{item['target']}", headers=admin).raise_for_status()
+    assert client.put(invalid, headers=tech, json=note).status_code == 409
+    report = "/api/reports/" + str(uuid4())
+    draft = dict(charger_id=item["target"], work_item_id=item["id"], checklist_version=TEMPLATE["version"],
+                 status="draft", base_revision=0, payload={"answers": {}})
+    rejected = client.put(report, headers=tech, json=draft)
+    assert rejected.status_code == 409 and rejected.json()["reason"] == "pcve_membership_detached"
+    upload(client, admin, cid, True, workbook).raise_for_status()
+    restored, item = current()
+    assert restored["revision"] == order["revision"] and item["state"] == "pending" and item["available"]
+    client.put(report, headers=tech, json=draft).raise_for_status()
 
 
 @pytest.mark.parametrize("backend", ["setup", "postgres_setup"])

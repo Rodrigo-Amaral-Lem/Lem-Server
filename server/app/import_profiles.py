@@ -79,17 +79,18 @@ def obsolete_station_field(key):
     }
 
 
-def clean_station_details(details):
+def clean_station_details(details, *, repair_legacy_cedillas=False):
     result = {k: v for k, v in (details or {}).items()
               if not obsolete_station_field(k) and not is_contract_notes(k)}
     # Some Portuguese workbook exports contain Ý/ý where a cedilla precedes
     # a/o/u. Identifiers, serials and technical model codes are left verbatim.
-    for field in ("address", "region", "manufacturer", "energy_supply"):
-        value = result.get(field)
-        if isinstance(value, str) and ("Ý" in value or "ý" in value):
-            value = re.sub(r"(?<=[a-zà-öø-ÿ])Ý(?=[aouãõáàâóôú])", "ç", value)
-            result[field] = re.sub(r"([Ýý])(?=[aouãõáàâóôú])",
-                                   lambda match: "Ç" if match[1] == "Ý" else "ç", value, flags=re.I)
+    if repair_legacy_cedillas:
+        for field in ("address", "region", "manufacturer", "energy_supply"):
+            value = result.get(field)
+            if isinstance(value, str) and ("Ý" in value or "ý" in value):
+                value = re.sub(r"(?<=[a-zà-öø-ÿ])Ý(?=[aouãõáàâóôú])", "ç", value)
+                result[field] = re.sub(r"([Ýý])(?=[aouãõáàâóôú])",
+                                       lambda match: "Ç" if match[1] == "Ý" else "ç", value, flags=re.I)
     if isinstance(result.get("source"), dict):
         result["source"] = {k: v for k, v in result["source"].items()
                             if not obsolete_station_field(k) and not is_contract_notes(k)}

@@ -242,7 +242,7 @@ def clean_existing_station_data(engine):
                             "INSERT INTO contract_charger_notes (charger_id, text, revision) "
                             "VALUES (:id, :value, 1) ON CONFLICT (charger_id) DO NOTHING"
                         ), {"id": key, "value": value})
-                clean = clean_station_details(data)
+                clean = clean_station_details(data, repair_legacy_cedillas=True)
                 if data and clean != data:
                     values = {"details": clean}
                     if model is Station:

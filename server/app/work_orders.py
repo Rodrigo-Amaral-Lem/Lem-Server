@@ -375,7 +375,7 @@ def register(app, db_dep, user_dep, admin, audit):
         order = order_for(db, oid, u)
         if db.get(WorkOrderCancellation, order.id):
             raise HTTPException(409, "Esta ordem foi cancelada.")
-        if order.completed:
+        if order.completed and body.following:
             raise HTTPException(409, "Esta ordem já foi concluída.")
         followers = set(order.followers)
         if body.following:
@@ -408,6 +408,12 @@ def register(app, db_dep, user_dep, admin, audit):
         today = lisbon_now().date().isoformat()
         if order.revision != body.revision or item.state != "pending" or not has_started(order, today):
             raise HTTPException(409, "Atualize a ordem. Esta tarefa ainda não começou ou já mudou.")
+        # Check the marker after taking the lock used by trash and restore.
+        db.scalar(select(Contract.id).where(Contract.id == item.contract_id).with_for_update(read=True))
+        if db.get(ContractTrash, item.contract_id):
+            raise HTTPException(423, "Contrato apagado; aguarda recuperação pelo administrador. Dados locais conservados.")
+        if db.scalar(select(Charger.id).where(Charger.id == item.target, attached_charger())) is None:
+            raise HTTPException(409, "O ID está indisponível. Atualize a ordem.")
         preserve_drafts(db, item)
         item.state, item.note, item.resolved_by, item.resolved_at = "invalid", note, u.id, now()
         order.revision += 1
