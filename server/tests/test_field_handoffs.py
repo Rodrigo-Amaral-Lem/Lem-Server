@@ -3,6 +3,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
+from hashlib import sha256
 from io import BytesIO
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -74,6 +75,57 @@ def mark_impeded(api, order, item, headers):
     ok(api.put(f"{order}/items/{item}/invalid", headers=headers, json={
         "revision": 1, "note": "Portão fechado / site locked",
     }))
+
+
+@pytest.mark.parametrize("handoff_first", [False, True])
+def test_photo_replacement_is_atomic_across_handoff(field, handoff_first):
+    api, admin, charger, _ = field
+    outgoing_id, outgoing = account(api, admin, "outgoing")
+    incoming_id, incoming = account(api, admin, "incoming")
+    job, _ = intervention(api, admin, charger, "corrective")
+    _, item, _ = plan(api, admin, [outgoing_id, incoming_id], job)
+    path = f"/api/reports/{uuid4()}"
+    ok(api.put(path, headers=outgoing, json=draft_body(job, item)))
+    original_path, original = add_photo(api, outgoing, path)
+    original_id = original_path.rsplit("/", 1)[-1]
+    replacement_id = str(uuid4())
+    replacement_path = f"{path}/photos/{replacement_id}"
+    rotated = BytesIO()
+    Image.open(BytesIO(original)).transpose(Image.Transpose.ROTATE_270).save(rotated, "PNG")
+    edited = rotated.getvalue()
+
+    def replace(data):
+        return api.put(replacement_path, headers=outgoing,
+                       data={"checkpoint": "FIN.03", "base_revision": "1", "replaces_id": original_id},
+                       files={"file": ("Âncora rotated.png", data, "image/png")})
+
+    def handoff(revision):
+        return ok(api.post(f"{path}/owner", headers=admin,
+                           json={"base_revision": revision, "owner_id": incoming_id}))
+
+    # A rejected upload must leave the report at the original revision and
+    # the original image available to the rest of the crew.
+    assert replace(b"invalid PNG").status_code == 422
+    assert api.get(original_path, headers=incoming).content == original
+    if handoff_first:
+        assert handoff(1)["revision"] == 2
+        assert replace(edited).status_code == 403
+        expected_id, expected_bytes, expected_path = original_id, original, original_path
+        assert api.get(replacement_path, headers=incoming).status_code == 404
+    else:
+        ack = ok(replace(edited))
+        assert ack == {"id": replacement_id, "digest": sha256(edited).hexdigest(),
+                       "replaced_id": original_id, "revision": 2}
+        assert ok(replace(edited)) == ack
+        assert handoff(2)["revision"] == 3
+        assert api.get(original_path, headers=incoming).status_code == 404
+        expected_id, expected_bytes, expected_path = replacement_id, edited, replacement_path
+
+    report = ok(api.get(path, headers=incoming))
+    photo, = report["photos"]
+    assert photo["id"] == expected_id
+    assert api.get(expected_path, headers=incoming).content == expected_bytes
+    assert report["payload"]["answers"]["FIN.03"]["notes"] == OBSERVATION
 
 
 @pytest.mark.parametrize("kind", ["corrective", "commissioning"])

@@ -51,7 +51,7 @@ def test_normal_update_preserves_data_uses_key_port_and_removes_stage(deployment
     assert r.returncode == 0, r.stdout + r.stderr
     assert (
         target / "deploy/.env"
-    ).read_bytes() == oldenv + b"LEM_LATEST_CLIENT_VERSION=0.9.1\nLEM_MIN_CLIENT_VERSION=0.9.1\n"
+    ).read_bytes() == oldenv + b"LEM_LATEST_CLIENT_VERSION=0.9.2\nLEM_MIN_CLIENT_VERSION=0.9.1\n"
     assert (target / "server/run.py").read_bytes() == (project / "server/run.py").read_bytes()
     assert next((target / ".deploy-backups").glob("*/server/obsolete.py")).exists()
     assert next((target / "deploy/backups").glob("*.dump")).read_bytes().startswith(b"PGDMP")

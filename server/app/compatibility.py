@@ -11,7 +11,7 @@ import os
 import re
 from urllib.parse import urlparse
 
-VERSION = "0.9.1"
+VERSION = "0.9.2"
 # Draft deletion requires the evidence manifest shown by the client.
 MINIMUM_CLIENT = "0.9.1"
 HEADER = "X-Lem-Client-Version"

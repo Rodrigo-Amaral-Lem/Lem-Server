@@ -1577,11 +1577,16 @@ def create_app(url=None, bootstrap=True):
         checkpoint: str = Form(),
         base_revision: int = Form(),
         file: UploadFile = File(),
+        replaces_id: str | None = Form(default=None),
         _slot=Depends(image_admission),
         u=Depends(user_dep),
         db=Depends(db_dep),
     ):
         uuid_check(pid)
+        if replaces_id is not None:
+            uuid_check(replaces_id)
+            if replaces_id == pid:
+                raise HTTPException(422, "A fotografia editada precisa de um novo ID")
         data = file_bytes(file, limit=60 * 1024 * 1024)
         # Images are fully decoded; videos receive bounded container/stream inspection.
         # Reject unsupported evidence before committing an immutable attachment.
@@ -1625,6 +1630,10 @@ def create_app(url=None, bootstrap=True):
                 or existing.digest != sha
             ):
                 raise HTTPException(409, "ID de fotografia já utilizado")
+            if replaces_id is not None:
+                if db.scalar(select(Photo.id).where(Photo.id == replaces_id)) is not None:
+                    raise HTTPException(409, "A substituição da fotografia ainda não foi confirmada")
+                return {"id": pid, "digest": sha, "replaced_id": replaces_id, "revision": r.revision}
             db.commit()  # Also retain any migration needed for this exact retry.
             return {"id": pid, "digest": sha}
         if r.status == "closed":
@@ -1636,6 +1645,22 @@ def create_app(url=None, bootstrap=True):
                 Photo.report_id == rid
             )
         ).one()
+        if replaces_id is not None:
+            original = db.execute(
+                select(Photo.checkpoint, func.length(Photo.data)).where(
+                    Photo.id == replaces_id, Photo.report_id == rid
+                )
+            ).first()
+            if original is None or original.checkpoint != checkpoint:
+                raise HTTPException(409, "A fotografia original já não está disponível neste item")
+            if any(
+                signature.get("photo_id") == replaces_id
+                for field in ("signatures", "legacy_signatures")
+                for signature in r.payload.get(field, {}).values()
+            ):
+                raise HTTPException(409, "A imagem da assinatura deve ser conservada")
+            count -= 1
+            total -= original[1]
         if count >= 200 or total + len(data) > 400 * 1024 * 1024:
             raise HTTPException(413, "Máximo 200 evidências e 400 MiB por report")
         db.add(
@@ -1650,12 +1675,21 @@ def create_app(url=None, bootstrap=True):
             )
         )
         audit(db, u, "photo.add", pid)
+        ack = {"id": pid, "digest": sha}
+        if replaces_id is not None:
+            # Readers and a new owner see either the original or the edited
+            # photograph. The evidence change advances the report revision once.
+            db.execute(delete(Photo).where(Photo.id == replaces_id, Photo.report_id == rid))
+            r.revision += 1
+            r.updated = now()
+            audit(db, u, "photo.delete", replaces_id)
+            ack.update(replaced_id=replaces_id, revision=r.revision)
         try:
             db.commit()
         except IntegrityError:
             db.rollback()
             raise HTTPException(409, "ID de fotografia já utilizado") from None
-        return {"id": pid, "digest": sha}
+        return ack
 
     # A current-base no-op is idempotent; a real removal advances revision once.
     @app.delete("/api/reports/{rid}/photos/{pid}")
