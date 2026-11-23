@@ -253,7 +253,7 @@ def test_ordered_commissioning_respects_start_and_can_be_rescheduled(backend, re
     completion = {"answers": answers()}
     add_signature(client, tech, report_id, completion)
     close = {**draft, "base_revision": 1, "status": "closed", "payload": completion}
-    too_early = client.put(endpoint, headers={**tech, "X-Lem-Client-Version": "0.6.1"}, json=close)
+    too_early = client.put(endpoint, headers=tech, json=close)
     assert too_early.status_code == 409
     assert too_early.json() == {
         "reason": "work_order_not_started",

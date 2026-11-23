@@ -5,11 +5,17 @@ from app.main import TEMPLATE
 """Deletion permissions, revision conflicts, photos and stale-client protection."""
 
 import uuid
+from hashlib import sha256
 from io import BytesIO
 from PIL import Image
 from sqlalchemy import select, func
 from test_workflow import setup, upload, answers, add_signature
 from app.models import Report, Photo, DeletedReport, Audit
+
+
+def evidence_digest(report):
+    rows = sorted((photo["id"], photo["digest"]) for photo in report["photos"])
+    return sha256("".join(f"{pid} {digest}\n" for pid, digest in rows).encode("utf-8")).hexdigest()
 
 
 def technician(c, h, cid, email, assigned=True):
@@ -43,6 +49,7 @@ def test_delete_permissions_photos_retry_and_stale_recreation(setup):
         "payload": {"answers": {}},
     }
     assert c.put(url, headers=owner, json=body).status_code == 200
+    before_photo = c.get(url, headers=h).json()
     image = BytesIO()
     Image.new("RGB", (32, 24), "green").save(image, "PNG")
     pid = str(uuid.uuid4())
@@ -60,8 +67,12 @@ def test_delete_permissions_photos_retry_and_stale_recreation(setup):
     assert c.delete(url + "?base_revision=1", headers=other).status_code == 403
     assert c.delete(url + "?base_revision=0", headers=owner).status_code == 409
     assert c.get(url, headers=owner).status_code == 200
-    assert c.get(url + "/photos/" + pid, headers=owner).status_code == 200
-    assert c.delete(url + "?base_revision=1", headers=owner).json() == {"id": rid, "deleted": True}
+    params = {"base_revision": 1, "evidence_digest": evidence_digest(before_photo)}
+    assert c.delete(url, headers=h, params=params).status_code == 409
+    assert c.delete(url, headers=h, params={"base_revision": 1}).status_code == 409
+    assert c.get(url + "/photos/" + pid, headers=owner).content == image.getvalue()
+    params["evidence_digest"] = evidence_digest(c.get(url, headers=owner).json())
+    assert c.delete(url, headers=owner, params=params).json() == {"id": rid, "deleted": True}
     assert c.delete(url + "?base_revision=1", headers=owner).status_code == 200
     assert c.get(url, headers=owner).status_code == 410
     assert c.get(url + "/exists", headers=owner).status_code == 410

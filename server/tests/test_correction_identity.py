@@ -74,7 +74,9 @@ def test_second_admin_corrects_identity_on_a_historical_report(correction_case, 
     staged = c.put(f'/api/reports/{working["id"]}', headers=editor, json={**data, 'status': 'draft'})
     assert staged.status_code == 200, staged.text
     assert charger_row(case)['details'][field] == previous
-    assert c.get(original_url, headers=editor).json() == original
+    reread = c.get(original_url, headers=editor).json()
+    assert reread.pop('station_update')['details'][field] == previous
+    assert reread == {key: value for key, value in original.items() if key != 'station_update'}
 
     data['base_revision'] = staged.json()['revision']
     result = commit(case, working, data)
@@ -124,14 +126,19 @@ def test_upgrade_preserves_pending_corrections_and_checks_later_station_writes(c
     with app.state.factory() as db:
         assert db.get(ReportCorrection, working['id']).identity_baseline is None
     assert c.get(working_url, headers=headers).json() == staged.json()
-    assert c.get(original_url, headers=headers).json() == original
+    frozen = {key: value for key, value in original.items() if key != 'station_update'}
+    reread = c.get(original_url, headers=headers).json()
+    assert reread.pop('station_update')['details']['model'] == current_model
+    assert reread == frozen
 
     result = commit(correction_case, working, data)
     assert result.status_code == (409 if changed_after_open else 200), result.text
     if changed_after_open:
         assert result.json()['detail']['reason'] == 'station_identity_conflict'
         assert c.get(working_url, headers=headers).json() == staged.json()
-        assert c.get(original_url, headers=headers).json() == original
+        reread = c.get(original_url, headers=headers).json()
+        assert reread.pop('station_update')['details']['model'] == current_model
+        assert reread == frozen
         assert charger_row(correction_case)['details']['model'] == current_model
     else:
         assert result.json()['photos'] == staged.json()['photos']
@@ -191,7 +198,10 @@ def test_staged_or_cancelled_identity_edit_does_not_change_station(correction_ca
     staged = c.put(f'/api/reports/{working["id"]}', headers=headers, json=data)
     assert staged.status_code == 200, staged.text
     assert charger_row(correction_case)['details'] == before
-    assert c.delete(f'/api/reports/{working["id"]}?base_revision={staged.json()["revision"]}', headers=headers).status_code == 200
+    from test_report_delete import evidence_digest
+    assert c.delete(f'/api/reports/{working["id"]}', headers=headers, params={
+        'base_revision': staged.json()['revision'], 'evidence_digest': evidence_digest(staged.json()),
+    }).status_code == 200
     assert charger_row(correction_case)['details'] == before
     assert c.get(f'/api/reports/{original["id"]}', headers=headers).json() == original
 

@@ -142,7 +142,8 @@ def test_stale_owner_cannot_delete_impeded_intervention_draft(field, kind):
     assert recovered["payload"]["answers"]["FIN.03"]["notes"] == OBSERVATION
     assert api.get(photo, headers=owner).content == original
 
-    assert ok(api.delete(path, headers=admin, params=params))["deleted"]
+    from test_report_delete import evidence_digest
+    assert ok(api.delete(path, headers=admin, params={**params, "evidence_digest": evidence_digest(recovered)}))["deleted"]
     assert api.get(path, headers=admin).status_code == 410
 
 

@@ -149,8 +149,10 @@ administrative changes that remove their access.
 
 Contract trash retains dependent records for **30 days** unless restored or explicitly purged. A
 lifespan sweep checks expiry approximately every minute. Purging is irreversible and differs from
-hiding/trashing. Report deletion is permanent and records a tombstone; a client receiving 410
-discards the corresponding deleted local report rather than restoring it from cache.
+hiding/trashing. Report deletion is permanent and records a tombstone. If evidence changed after
+the draft was opened, refresh the report and review the new attachments before trying deletion again.
+When a device receives HTTP 410 with unsent work, it retains a separate local recovery copy for its
+owner and blocks further writes to the deleted report ID.
 
 ## Backup and restore — on the server
 

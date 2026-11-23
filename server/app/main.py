@@ -455,7 +455,7 @@ def create_app(url=None, bootstrap=True):
         station_update = ({"station_update": {"station_id": charger.station_id,
                            "external_id": charger.external_id, "details": charger.details,
                            "updated": charger.station.updated if charger.station is not None else None}}
-                          if correction and correction.state == "committed" else {})
+                          if r.status == "closed" else {})
         item = work_orders.bound_item(db, r.id)
         expired = db.get(work_orders.ExpiredVisitDraft, r.id) if not item and r.status == "draft" else None
         recovery = r.status == "draft" and (expired or (item and item.state != "pending"))
@@ -1400,10 +1400,6 @@ def create_app(url=None, bootstrap=True):
         audit(db, u, "report." + body.status, rid)
         db.refresh(r)
         out = report_json(db, r)
-        if body.status == "closed":
-            out["station_update"] = {"station_id": charger.station_id, "external_id": charger.external_id,
-                                     "details": charger.details,
-                                     "updated": charger.station.updated if charger.station is not None else None}
         db.commit()
         return out
 
@@ -1507,7 +1503,8 @@ def create_app(url=None, bootstrap=True):
     # Administrative deletion is intentionally broader than editing ownership.
     # Delete image rows and create a permanent report tombstone in the same transaction.
     @app.delete("/api/reports/{rid}")
-    def delete_report(rid: str, base_revision: int, correction_only: bool = False, u=Depends(user_dep), db=Depends(db_dep)):
+    def delete_report(rid: str, base_revision: int, correction_only: bool = False,
+                      evidence_digest: str | None = None, u=Depends(user_dep), db=Depends(db_dep)):
         uuid_check(rid)
         corrections.lock_report_users(db, rid)
         # Serialize technician deletion with planning and resolution of the
@@ -1549,6 +1546,14 @@ def create_app(url=None, bootstrap=True):
             raise HTTPException(
                 409, "Report alterado noutro dispositivo; sincronize ou atualize antes de apagar"
             )
+        if r.status == "draft":
+            # Uploads do not advance the answers revision. Compare the immutable
+            # attachment identities under the report lock used by photo uploads.
+            evidence = sorted(db.execute(select(Photo.id, Photo.digest).where(Photo.report_id == rid)))
+            if evidence or evidence_digest is not None:
+                manifest = "".join(f"{pid} {digest}\n" for pid, digest in evidence)
+                if hashlib.sha256(manifest.encode("utf-8")).hexdigest() != evidence_digest:
+                    raise HTTPException(409, "As evidências do report mudaram; atualize antes de apagar.")
         claimed = db.execute(update(Report).where(Report.id == rid, Report.revision == base_revision,
             Report.owner_id == r.owner_id, Report.status == r.status).values(revision=base_revision+1)
             .execution_options(synchronize_session=False))

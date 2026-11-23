@@ -164,7 +164,9 @@ def test_cancel_retention_stale_revision_and_ordinary_close(correction_case):
     assert c.post(f'/api/contracts/{contract["id"]}/trash',headers=h,json={'confirmation':'APAGAR'}).status_code==200
     assert c.post(f'/api/reports/{rid}/correction/commit',headers=h,json=body(draft)).status_code==423
     assert c.post(f'/api/contracts/{contract["id"]}/restore',headers=h).status_code==200
-    assert c.delete(f'/api/reports/{rid}?base_revision=1',headers=h).status_code==200
+    from test_report_delete import evidence_digest
+    assert c.delete(f'/api/reports/{rid}', headers=h,
+                    params={"base_revision": 1, "evidence_digest": evidence_digest(draft)}).status_code == 200
     assert c.delete(f'/api/reports/{rid}?base_revision=1',headers=h).status_code==200
     assert c.get(f'/api/reports/{original["id"]}',headers=h).json()==original
 

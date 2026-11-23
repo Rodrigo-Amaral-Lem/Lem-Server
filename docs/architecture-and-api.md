@@ -88,7 +88,7 @@ are enabled only when `LEM_API_DOCS=1`.
 | GET `/api/reports/{rid}/exists`, `/api/reports/{rid}` | Creation retry probe / full report |
 | PUT `/api/reports/{rid}` | Revision-checked create/update/close |
 | GET `/api/reports/{rid}/owners`; POST `/api/reports/{rid}/owner` | Ownership candidates and transfer |
-| DELETE `/api/reports/{rid}` | Revision-checked permanent report deletion |
+| DELETE `/api/reports/{rid}` | Permanent deletion with revision and draft evidence preconditions |
 | POST `/api/reports/{rid}/corrections` | Desktop administrator begins an independent working copy (`id`, `base_revision`) |
 | POST `/api/reports/{rid}/correction/commit` | Validate and atomically replace the closed source using a full ReportInput |
 | PUT/GET/DELETE `/api/reports/{rid}/photos/{pid}` | Evidence bytes and removals |
@@ -262,6 +262,17 @@ When an individually assigned technician owns the current draft, the administrat
 At the UTC deadline the order disappears from the API. The background cleanup runs on startup and every minute, deleting the order, items, assignments and notifications. It retains the allocated UUID and code to prevent request replays and number reuse. Reports and attachments survive. A draft bound to a deleted visit retains its original work item UUID and is returned with `work_item_expired: true` for read-only recovery.
 
 Limited contracts include `order_targets` so clients can retain authorised offline rows when another contract refreshes. Planning reserves one ordinary draft per pending membership. Draft summaries expose owner, report revision and attachment count. At resolution, any other existing drafts are recorded for read-only recovery by their still-assigned owners. A removed closed report retains its identifier and completion record with `report_removed` set.
+
+Detached pending memberships remain unavailable for new drafts and still advertise existing drafts.
+An exact report grant remains valid for an advertised resolved report after the pending visit's scope
+leaves the contract catalogue. A closed report GET returns the current versioned `station_update`
+alongside the immutable report snapshot so a lost closure response can be reconciled safely.
+
+Draft deletion compares `base_revision` and the evidence list under the report lock shared with
+uploads. Send `evidence_digest` as the SHA-256 of the UTF-8 lines `<photo-id> <digest>\n`,
+sorted by photo ID. The API returns 409 on a mismatch or a missing digest for a draft with evidence.
+An empty list hashes to the SHA-256 of an empty string. Retrying a completed delete returns its
+tombstone acknowledgement.
 
 The creator follows automatically. Other administrators subscribe through `PUT /api/work-orders/{id}/follow`. Each installation reads its signed-in user's inbox at `GET /api/work-order-notices/{device}` and acknowledges individual notifications with a PUT to the appended notice UUID. Start notices are returned during the Lisbon start day from 07:00 inclusive to 20:00 exclusive. Old unacknowledged start dates expire. Assignment, impediment and completion events survive offline periods.
 

@@ -11,9 +11,9 @@ import os
 import re
 from urllib.parse import urlparse
 
-VERSION = "0.9.0"
-# Earlier clients display a commissioning task as preventive in a work order.
-MINIMUM_CLIENT = "0.6.1"
+VERSION = "0.9.1"
+# Draft deletion requires the evidence manifest shown by the client.
+MINIMUM_CLIENT = "0.9.1"
 HEADER = "X-Lem-Client-Version"
 
 
@@ -35,7 +35,7 @@ class ClientPolicy:
             raise ValueError(
                 "Invalid Lem client policy: require minimum <= latest (major.minor.patch)"
             )
-        # A stale deployment can still name a release that predates commissioning in work orders.
+        # A stale deployment can still name a release without the draft deletion guard.
         # Keep valid operator limits. An obsolete ceiling below the protocol floor
         # cannot admit any supported client, so use the shipped release instead.
         if low < version_tuple(MINIMUM_CLIENT):

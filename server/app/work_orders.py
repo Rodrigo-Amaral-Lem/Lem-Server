@@ -217,11 +217,14 @@ def register(app, db_dep, user_dep, admin, audit):
         chargers = {c.id: c for c in db.scalars(select(Charger).options(
                     selectinload(Charger.station), selectinload(Charger.contract_note)).where(Charger.id.in_(targets),
                     attached_charger(), ~Charger.contract_id.in_(select(ContractTrash.contract_id)))).unique()}
-        pending = {i.target for o in orders for i in o.items if i.state == "pending" and i.target in chargers}
-        closed_ids = {i.report_id for o in orders for i in o.items if i.report_id}
-        existing = set(db.scalars(select(Report.id).where(Report.id.in_(closed_ids))))
         trashed = set(db.scalars(select(ContractTrash.contract_id).where(ContractTrash.contract_id.in_(
             {i.contract_id for o in orders for i in o.items}))))
+        # A detached membership still owns its existing reports. Attachment to
+        # the contract is required for a new draft, separately from draft lookup.
+        pending = {i.target for o in orders for i in o.items
+                   if i.state == "pending" and i.contract_id not in trashed}
+        closed_ids = {i.report_id for o in orders for i in o.items if i.report_id}
+        existing = set(db.scalars(select(Report.id).where(Report.id.in_(closed_ids))))
         item_ids = [i.id for o in orders for i in o.items if i.state in ("closed", "invalid")]
         recovery = {}
         for item_id, rid in db.execute(select(WorkItemDraft.item_id, WorkItemDraft.report_id)

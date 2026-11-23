@@ -119,6 +119,7 @@ def catalogue_jobs(db, scope_ids, user):
     for job, code, charger, coverage, technician, note in db.execute(query):
         jobs[job.id] = {"id": job.id, "kind": job.kind, "reference": code, "created": job.created,
                         "station_id": charger.station_id, "external_id": charger.external_id, "details": charger.details,
+                        "station_updated": charger.station.updated if charger.station is not None else None,
                         "contract": contract_data(coverage) if coverage else None, "technician": technician,
                         "notes": note.text if note else "", "notes_revision": note.revision if note else 0}
     reports = (select(Report.charger_id, Report.id, Report.status, Report.owner_id, Report.revision)
