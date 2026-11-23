@@ -6,7 +6,16 @@ import re
 import unicodedata
 from urllib.parse import quote
 
-EVIDENCE_EXTENSIONS = {"image/jpeg": "jpg", "image/png": "png", "video/mp4": "mp4", "video/3gpp": "3gp"}
+MAX_CHARGER_ID_BYTES = 72
+MAX_CONTEXT_BYTES = 112
+MAX_FILENAME_BYTES = 250
+
+EVIDENCE_EXTENSIONS = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "video/mp4": "mp4",
+    "video/3gpp": "3gp",
+}
 
 
 def component(value, fallback, maximum):
@@ -19,24 +28,32 @@ def component(value, fallback, maximum):
 
 def report_identifier(report):
     snapshot = report.get("snapshot") or {}
-    charger = component((snapshot.get("charger") or {}).get("external_id"), "Carregador", 72)
+    charger_id = (snapshot.get("charger") or {}).get("external_id")
+    charger = component(charger_id, "Carregador", MAX_CHARGER_ID_BYTES)
     reference = (snapshot.get("intervention") or {}).get("reference")
     if reference:
-        return f"{charger}_{component(reference, 'Intervenção', 112)}"
-    contract = component((snapshot.get("contract") or {}).get("name"), "Contrato", 112)
-    return f"{charger}_{contract}"
+        return f"{charger}_{component(reference, 'Intervenção', MAX_CONTEXT_BYTES)}"
+    contract_name = (snapshot.get("contract") or {}).get("name")
+    return f"{charger}_{component(contract_name, 'Contrato', MAX_CONTEXT_BYTES)}"
 
 
 def evidence_stem(identifier, evidence_id, extension):
-    # Keep the full stable evidence ID and respect the same byte limit as App.
-    suffix = f"_{evidence_id}"
-    limit = max(1, 250 - len(f"{suffix}.{extension}".encode("utf-8")))
-    return component(identifier, "Report", limit) + suffix
+    # The caller adds the extension. Reserve space for it and the full evidence ID.
+    id_suffix = f"_{evidence_id}"
+    suffix_bytes = len(f"{id_suffix}.{extension}".encode("utf-8"))
+    prefix_budget = max(1, MAX_FILENAME_BYTES - suffix_bytes)
+    return component(identifier, "Report", prefix_budget) + id_suffix
 
 
 def content_disposition(identifier, extension, *, inline=False):
-    filename = identifier + "." + extension
+    suffix = "." + extension
+    filename = identifier + suffix
+    # The extended parameter keeps the original spelling. Older clients read the ASCII fallback.
     ascii_identifier = unicodedata.normalize("NFKD", identifier).encode("ascii", "ignore").decode("ascii")
-    fallback = component(ascii_identifier, "Report", 249 - len(extension)) + "." + extension
+    fallback = component(ascii_identifier, "Report", MAX_FILENAME_BYTES - len(suffix)) + suffix
     disposition = "inline" if inline else "attachment"
-    return f'{disposition}; filename="{fallback}"; filename*=UTF-8\'\'{quote(filename, safe="")}'
+    encoded_filename = quote(filename, safe="")
+    return (
+        f'{disposition}; filename="{fallback}"; '
+        f"filename*=UTF-8''{encoded_filename}"
+    )
