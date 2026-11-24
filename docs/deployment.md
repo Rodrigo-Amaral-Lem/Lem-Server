@@ -58,7 +58,7 @@ runs the API as user `lem`.
 | `LEM_DOMAIN` | Proxy hostname; default `lem.rodrod.pt` |
 | `POSTGRES_PASSWORD` | Required database password; installer generates URL-safe hex |
 | `ADMIN_EMAIL`, `ADMIN_NAME`, `ADMIN_PASSWORD` | Initial account only; password must have at least 12 characters |
-| `LEM_MIN_CLIENT_VERSION`, `LEM_LATEST_CLIENT_VERSION` | Admitted version interval, defaults `0.9.1` / `0.10.0` |
+| `LEM_MIN_CLIENT_VERSION`, `LEM_LATEST_CLIENT_VERSION` | Admitted version interval, defaults `0.9.1` / `0.11.0` |
 | `LEM_UPDATE_URL` | Optional HTTPS update/download instructions URL |
 | `LEM_EXPORT_CONCURRENCY`, `LEM_IMAGE_CONCURRENCY` | API admission slots; defaults 2/1, capped at 4/2 |
 | `LEM_DOWNLOAD_CONCURRENCY` | Simultaneous original-evidence responses per worker; default 8, capped at 16 |
