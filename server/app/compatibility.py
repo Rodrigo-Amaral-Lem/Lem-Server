@@ -11,9 +11,9 @@ import os
 import re
 from urllib.parse import urlparse
 
-VERSION = "0.11.0"
-# Draft deletion requires the evidence manifest shown by the client.
-MINIMUM_CLIENT = "0.9.1"
+VERSION = "0.11.1"
+# Checklist v8 changes checkpoint identities and adds required trip time fields.
+MINIMUM_CLIENT = "0.11.1"
 HEADER = "X-Lem-Client-Version"
 
 

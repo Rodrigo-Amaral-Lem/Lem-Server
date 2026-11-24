@@ -6,6 +6,16 @@
 from copy import deepcopy
 from collections import Counter
 import re
+import json
+import os
+from pathlib import Path
+
+SHARED = Path(__file__).resolve().parents[2] / "shared"
+TEMPLATE = json.loads(Path(os.getenv("CHECKLIST_FILE", SHARED / "checklist-v1.json")).read_text(encoding="utf-8"))
+# Closed offline uploads retain the exact form that signed off their evidence.
+FROZEN_TEMPLATES = {version: json.loads((SHARED / f"checklist-v{version}.json").read_text(encoding="utf-8"))
+                    for version in (6, 7)}
+
 
 ALIASES = {
     "AC": "AC (tipo não indicado)",
@@ -185,7 +195,7 @@ def corrected_draft_template(template, status, *, upgrade=True):
 
 def corrected_draft_payload(payload, template, status, *, upgrade=True):
     """Migrate editable legacy content; call with its ORIGINAL template/version."""
-    if status != "draft" or template.get("version") not in (6, 7):
+    if status != "draft" or template.get("version") not in (6, 7, 8):
         return payload
     result = deepcopy(payload)
     answers = result.get("answers", {})
@@ -200,4 +210,7 @@ def corrected_draft_payload(payload, template, status, *, upgrade=True):
     if upgrade and template.get("version") == 6:
         from .maintenance_migration import upgrade_payload
         result = upgrade_payload(result)
+    if upgrade and template.get("version") in (6, 7):
+        from .maintenance_migration import trip_time_payload
+        result = trip_time_payload(result)
     return result

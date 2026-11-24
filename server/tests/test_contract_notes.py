@@ -115,7 +115,7 @@ def test_permissions_retries_concurrency_and_detached_history(setup):
     assert client.put(url, headers=mobile, json={**body, "notes": winner["contract_notes"]}).json() == winner
     assert client.get(url, headers=tech).json() == winner
     assert client.delete(url.removesuffix("/notes"), headers=admin).status_code == 200
-    assert client.get(url, headers=tech).json() == {**winner, "attached": False}
+    assert client.get(url, headers=tech).status_code == 409
     assert client.put(url, headers=admin, json=body).status_code == 409
     send_book(client, admin, root + "/import", book())
     assert client.get(url, headers=tech).json() == winner

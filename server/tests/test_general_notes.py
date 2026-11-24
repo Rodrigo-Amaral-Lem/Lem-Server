@@ -32,7 +32,7 @@ def assert_notes_photo_in_pdf(pdf):
     assert any(all(abs(actual - expected) < 5 for actual, expected in
                    zip(image.getpixel((30, 20)), (184, 36, 127))) for image in matches)
 
-@pytest.mark.parametrize('key',['SEG.07','SITE.06','QVE.14','EST.18','MAN.22','CARG.07','FIN.03'])
+@pytest.mark.parametrize('key',['SEG.07','SITE.06','QVE.14','EST.18','MAN.24','CARG.07','FIN.03'])
 def test_general_notes_media_and_export(setup,key):
     c,h,rid,body=report(setup)
     body['payload']['answers'][key]={'value':'','notes':'Observacao geral de teste '+key}
@@ -62,7 +62,7 @@ def test_general_notes_media_and_export(setup,key):
 @pytest.mark.parametrize('empty_answer', [None, {'value': '', 'notes': ''}])
 def test_general_notes_zip_keeps_media_without_any_observation_text(setup, empty_answer):
     c, h, rid, body = report(setup)
-    keys = ['SEG.07', 'SITE.06', 'QVE.14', 'EST.18', 'MAN.22', 'CARG.07', 'FIN.03']
+    keys = ['SEG.07', 'SITE.06', 'QVE.14', 'EST.18', 'MAN.24', 'CARG.07', 'FIN.03']
     expected = {}
     for key in keys:
         body['payload']['answers'][key] = empty_answer
@@ -83,7 +83,7 @@ def test_general_notes_zip_keeps_media_without_any_observation_text(setup, empty
 
 def test_general_notes_can_be_omitted(setup):
     c,h,rid,body=report(setup)
-    for key in ['SITE.06','QVE.14','EST.18','MAN.22','CARG.07','FIN.03']:body['payload']['answers'].pop(key,None)
+    for key in ['SITE.06','QVE.14','EST.18','MAN.24','CARG.07','FIN.03']:body['payload']['answers'].pop(key,None)
     response=c.put('/api/reports/'+rid,headers=h,json=body)
     assert response.status_code==200,response.text
 
@@ -110,19 +110,17 @@ def test_corrected_old_est18_media_survives_pdf_zip_and_another_correction(setup
     # No observation text is needed for attached evidence to remain exportable.
     with app.state.factory() as db:
         stored = db.get(Report, rid)
-        schema = deepcopy(stored.template)
+        from app.main import LEGACY_TEMPLATE
+        from app.maintenance_migration import upgrade_checkpoint
+        schema = deepcopy(LEGACY_TEMPLATE)
         schema['version'] = version
-        if version == 6:
-            for section in schema['sections']:
-                if section['id'] == 'MAN':
-                    section['items'] = [item for item in section['items'] if item['id'] != 'MAN.21']
-                    next(item for item in section['items'] if item['id'] == 'MAN.22')['id'] = 'MAN.21'
         stored.template = schema
         payload = deepcopy(stored.payload)
+        current = payload['answers']
+        payload['answers'] = {item['id']: current[upgrade_checkpoint(item['id'], 6)]
+                              for group in schema['sections'] for item in group['items']
+                              if upgrade_checkpoint(item['id'], 6) in current}
         payload['answers']['EST.18'] = None
-        if version == 6:
-            payload['answers'].pop('MAN.21', None)
-            payload['answers']['MAN.21'] = payload['answers'].pop('MAN.22')
         stored.payload = payload
         for mime, data in originals.items():
             pid = str(uuid.uuid4())
@@ -134,7 +132,7 @@ def test_corrected_old_est18_media_survives_pdf_zip_and_another_correction(setup
     for _ in range(2):
         original = c.get('/api/reports/' + rid, headers=headers).json()
         working = start((c, headers, contract, app, original))
-        assert working['template']['version'] == 7
+        assert working['template']['version'] == 8
         photo_ids = {p['id'] for p in working['photos']}
         assert all(signature['photo_id'] in photo_ids
                    for signature in working['payload'].get('legacy_signatures', {}).values())
@@ -165,7 +163,8 @@ def test_site_notes_added_once_to_existing_draft_only():
     from copy import deepcopy
     from app.main import TEMPLATE
     from app.checklist import corrected_draft_template
-    old = deepcopy(TEMPLATE)
+    from app.main import FROZEN_TEMPLATES
+    old = deepcopy(FROZEN_TEMPLATES[7])
     site = next(s for s in old['sections'] if s['id'] == 'SITE')
     site['items'] = [i for i in site['items'] if i['id'] != 'SITE.06']
     fixed = corrected_draft_template(old, 'draft')

@@ -38,7 +38,7 @@ def commit(case, report, data):
 def review_migrated_form(case, working):
     """Old answers are historical: explicitly review/sign the current questions."""
     c, headers, *_ = case
-    assert working['template']['version'] == 7
+    assert working['template']['version'] == 8
     assert working['template']['sections'][-1]['id'] == 'ANT'
     working['payload']['answers'].update(answers())
     add_signature(c, headers, working['id'], working['payload'], revision=working['revision'])

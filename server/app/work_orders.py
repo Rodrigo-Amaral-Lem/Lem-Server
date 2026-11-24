@@ -11,7 +11,7 @@ from sqlalchemy.orm import aliased, selectinload
 
 from .import_profiles import normalize_contract_notes
 from .models import (Charger, Contract, ContractTrash, CorrectiveContract, DeletedWorkOrder, ExpiredVisitDraft, Intervention, NoticeReceipt, Photo, Report, ReportCorrection, User, WorkAssignee,
-                     WorkItem, WorkItemDraft, WorkNotice, WorkOrder, WorkOrderCancellation, attached_charger, now)
+                     WorkItem, WorkItemDraft, WorkNotice, WorkOrder, WorkOrderCancellation, RemovedCharger, attached_charger, now)
 from .stations import lock_catalogue
 from .work_order_retention import cancellation_cutoff
 
@@ -219,10 +219,11 @@ def register(app, db_dep, user_dep, admin, audit):
                     attached_charger(), ~Charger.contract_id.in_(select(ContractTrash.contract_id)))).unique()}
         trashed = set(db.scalars(select(ContractTrash.contract_id).where(ContractTrash.contract_id.in_(
             {i.contract_id for o in orders for i in o.items}))))
+        held = set(db.scalars(select(RemovedCharger.charger_id).where(RemovedCharger.charger_id.in_(targets))))
         # A detached membership still owns its existing reports. Attachment to
         # the contract is required for a new draft, separately from draft lookup.
         pending = {i.target for o in orders for i in o.items
-                   if i.state == "pending" and i.contract_id not in trashed}
+                   if i.state == "pending" and i.contract_id not in trashed and i.target not in held}
         closed_ids = {i.report_id for o in orders for i in o.items if i.report_id}
         existing = set(db.scalars(select(Report.id).where(Report.id.in_(closed_ids))))
         item_ids = [i.id for o in orders for i in o.items if i.state in ("closed", "invalid")]
@@ -241,7 +242,7 @@ def register(app, db_dep, user_dep, admin, audit):
             summary = dict(id=rid, owner_id=owner, owner_name=name, revision=revision, photo_count=photo_count)
             if target in pending and not archived:
                 reports.setdefault(target, []).append(summary)
-            if u.role == "admin" or owner == u.id:
+            if target not in held and (u.role == "admin" or owner == u.id):
                 for iid in recovery.get(rid, []):
                     recovered.setdefault(iid, []).append(summary)
         today = lisbon_now().date().isoformat()
@@ -256,7 +257,7 @@ def register(app, db_dep, user_dep, admin, audit):
                         station_updated=c.station.updated if c and c.station else None,
                         contract_notes=c.contract_note.text if c and c.contract_note else "",
                         notes_revision=c.contract_note.revision if c and c.contract_note else 0,
-                        available=(i.report_id in existing and i.contract_id not in trashed) if i.state == "closed" else c is not None,
+                        available=(i.report_id in existing and i.contract_id not in trashed and i.target not in held) if i.state == "closed" else c is not None,
                         report_removed=i.state == "closed" and i.report_id not in existing, station_id=i.station_id,
                         state=i.state, note=i.note, report_id=i.report_id, resolved_at=i.resolved_at,
                         resolved_by=i.resolved_by, drafts=reports.get(i.target, []) if i.state == "pending" else ([] if i.contract_id in trashed else recovered.get(i.id, []))))

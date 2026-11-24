@@ -58,7 +58,7 @@ def test_reassignment_preserves_the_server_draft_and_enforces_scope(field, kind)
     assert api.get(photo_path, headers=admin).content == photo_bytes
 
 
-def test_detaching_planned_pcve_keeps_existing_report_in_order(field):
+def test_planned_visit_recovers_its_existing_report_when_membership_is_restored(field):
     api, admin, charger, _ = field
     owner_id, owner = account(api, admin, "planned")
     commissioning, _ = intervention(api, admin, charger, "commissioning")
@@ -74,13 +74,15 @@ def test_detaching_planned_pcve_keeps_existing_report_in_order(field):
 
     ok(api.delete(f"/api/contracts/{charger['contract_id']}/chargers/{charger['id']}", headers=admin))
     after = ok(api.get("/api/work-orders", headers=owner))["orders"][0]["items"][0]
-    assert after["state"] == "pending" and not after["available"] and [draft["id"] for draft in after["drafts"]] == [rid]
+    assert after["state"] == "pending" and not after["available"] and after["drafts"] == []
     assert ok(api.get(f"/api/contracts/{charger['contract_id']}/chargers",
                       headers={**owner, **REPORT_CATALOGUE})) == []
+    assert api.get(path, headers=owner).status_code == 409
+    assert api.get(photo_path, headers=owner).status_code == 409
+    assert api.put(f"/api/reports/{uuid4()}", headers=owner, json=body).status_code == 409
+    ok(api.post(f"/api/contracts/{charger['contract_id']}/chargers/{charger['id']}/restore", headers=admin))
     assert ok(api.get(path, headers=owner))["payload"]["answers"]["FIN.03"]["notes"] == OBSERVATION
     assert api.get(photo_path, headers=owner).content == photo_bytes
-    new_report = f"/api/reports/{uuid4()}"
-    assert api.put(new_report, headers=owner, json=body).status_code == 409
     updated = ok(api.put(path, headers=owner, json={**body, "base_revision": 1}))
     assert updated["id"] == rid and updated["revision"] == 2
 

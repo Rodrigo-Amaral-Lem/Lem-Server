@@ -212,6 +212,34 @@ def attached_charger():
     return ~select(DetachedCharger.charger_id).where(DetachedCharger.charger_id == Charger.id).exists()
 
 
+class RemovedCharger(Base):
+    """Only explicit removals made under the 14-day policy have a deadline."""
+    __tablename__ = "removed_charger_deadlines"
+    charger_id: Mapped[str] = mapped_column(ForeignKey("chargers.id", ondelete="CASCADE"), primary_key=True)
+    purge_after: Mapped[str] = mapped_column(String(50), index=True)
+
+
+class RemovedCoverage(Base):
+    __tablename__ = "removed_corrective_coverage"
+    contract_id: Mapped[str] = mapped_column(ForeignKey("corrective_contracts.id"), primary_key=True)
+    station_id: Mapped[str] = mapped_column(ForeignKey("stations.id"), primary_key=True)
+    purge_after: Mapped[str] = mapped_column(String(50), index=True)
+
+
+class CoverageTrashLink(Base):
+    """Identify exactly the intervention scopes removed with a commercial membership."""
+    __tablename__ = "coverage_trash_links"
+    job_id: Mapped[str] = mapped_column(ForeignKey("contract_trash.contract_id", ondelete="CASCADE"), primary_key=True)
+    contract_id: Mapped[str] = mapped_column(ForeignKey("corrective_contracts.id"), index=True)
+    station_id: Mapped[str] = mapped_column(ForeignKey("stations.id"))
+
+
+class DeletedIntervention(Base):
+    __tablename__ = "deleted_interventions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    reference: Mapped[str] = mapped_column(String(240), unique=True)
+
+
 class DataMigration(Base):
     __tablename__ = "completed_data_migrations"
     name: Mapped[str] = mapped_column(String(80), primary_key=True)

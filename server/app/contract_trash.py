@@ -9,6 +9,8 @@ finishes an accepted operation before hiding/deleting its contract.
 """
 
 from datetime import datetime, timedelta, timezone
+import uuid
+
 from sqlalchemy import select, delete
 from .models import (
     Contract,
@@ -24,10 +26,69 @@ from .models import (
     Photo,
     ImportBatch,
     Audit,
+    Intervention,
+    DeletedIntervention,
+    RemovedCharger,
+    RemovedCoverage,
+    WorkItemDraft,
+    DetachedCharger,
 )
-import uuid
 
 RETENTION = timedelta(days=30)
+MEMBERSHIP_RETENTION = timedelta(days=14)
+INTERVENTION_RETENTION = timedelta(hours=48)
+
+
+def purge_charger_reports(db, charger_id):
+    """Caller holds the contract write lock. Preserve tombstones against delayed sync."""
+    reports = select(Report.id).where(Report.charger_id == charger_id)
+    db.execute(DeletedReport.__table__.insert().from_select(
+        ["id", "charger_id", "owner_id", "status"],
+        select(Report.id, Report.charger_id, Report.owner_id, Report.status).where(Report.charger_id == charger_id)))
+    deleted = select(DeletedReport.id).where(DeletedReport.charger_id == charger_id)
+    operations = (
+        delete(ReportCorrection).where(ReportCorrection.id.in_(deleted) | ReportCorrection.source_id.in_(deleted)),
+        delete(WorkItemDraft).where(WorkItemDraft.report_id.in_(reports)),
+        delete(OwnershipTransfer).where(OwnershipTransfer.report_id.in_(deleted)),
+        delete(Photo).where(Photo.report_id.in_(reports)),
+        delete(Report).where(Report.charger_id == charger_id),
+    )
+    for operation in operations:
+        db.execute(operation.execution_options(synchronize_session=False))
+
+
+def reattach_charger(db, charger_id, *, restore=False):
+    """Reimporting after expiry starts a fresh membership without resurrecting reports."""
+    entry = db.get(RemovedCharger, charger_id)
+    if entry is not None:
+        if entry.purge_after <= utc_now().isoformat():
+            if restore:
+                return False
+            purge_charger_reports(db, charger_id)
+        db.delete(entry)
+    db.execute(delete(DetachedCharger).where(DetachedCharger.charger_id == charger_id))
+    return True
+
+
+def purge_memberships(factory, instant=None):
+    from .stations import lock_catalogue
+    cutoff = (instant or utc_now()).isoformat()
+    with factory() as db:
+        due = list(db.scalars(select(RemovedCharger.charger_id).where(RemovedCharger.purge_after <= cutoff)))
+        coverage_due = db.scalar(select(RemovedCoverage.contract_id).where(RemovedCoverage.purge_after <= cutoff).limit(1))
+    for key in due:
+        with factory.begin() as db:
+            lock_catalogue(db)
+            cid = db.scalar(select(Charger.contract_id).where(Charger.id == key))
+            db.scalar(select(Contract.id).where(Contract.id == cid).with_for_update())
+            entry = db.get(RemovedCharger, key)
+            if entry and entry.purge_after <= cutoff:
+                purge_charger_reports(db, key)
+                db.delete(entry)
+    if coverage_due:
+        with factory.begin() as db:
+            lock_catalogue(db)
+            db.execute(delete(RemovedCoverage).where(RemovedCoverage.purge_after <= cutoff))
 
 
 def purge_contract(db, contract, entry):
@@ -36,7 +97,13 @@ def purge_contract(db, contract, entry):
     chargers = select(Charger.id).where(Charger.contract_id == cid)
     reports = select(Report.id).where(Report.charger_id.in_(chargers))
     removed_reports = select(DeletedReport.id).where(DeletedReport.charger_id.in_(chargers))
+    job = db.get(Intervention, cid)
+    if job is not None:
+        db.add(DeletedIntervention(id=cid, reference=contract.name))
+        db.delete(job)
+        db.flush()
     operations = [
+        delete(WorkItemDraft).where(WorkItemDraft.report_id.in_(reports)),
         delete(ReportCorrection).where(ReportCorrection.contract_id == cid),
         delete(Photo).where(Photo.report_id.in_(reports)),
         delete(OwnershipTransfer).where(

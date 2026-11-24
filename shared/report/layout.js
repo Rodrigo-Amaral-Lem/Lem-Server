@@ -108,7 +108,7 @@ function renderReport(report, styles, host) {
                 else if (!notes.trim()) text("Sem observações");
             } else {
                 // Old frozen current readings may be unitless; never relabel them as mA.
-                var measurementId = Number(report.template.version) < 7 && /^(MAN\.11|MAN\.12)$/.test(id) ? "legacy-" + id : id;
+                var measurementId = Number(report.template.version) < 7 && /^(MAN\.11|MAN\.12)$/.test(id) ? "legacy-" + id : item.measurement_key || id;
                 var formatted = Measurements.format(measurementId, raw), nok = Measurements.outside(measurementId, raw);
                 text("Resposta: " + ((formatted === null ? raw : formatted) || "Por preencher") + (nok ? " · NOK — fora dos limites" : ""), 9, nok, nok ? "#a12626" : ink);
             }

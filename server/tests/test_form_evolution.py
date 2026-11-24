@@ -10,7 +10,7 @@ import subprocess
 
 import pytest
 from app.checklist import corrected_draft_template, corrected_draft_payload, for_charger
-from app.main import TEMPLATE, LEGACY_TEMPLATE
+from app.main import TEMPLATE, LEGACY_TEMPLATE, FROZEN_TEMPLATES
 from app.maintenance_migration import upgrade_checkpoint
 from app.models import Report
 from test_workflow import setup
@@ -25,8 +25,8 @@ def project(report):
     for key in ('payload', '_inflight_payload'):
         if key in result:
             result[key] = corrected_draft_payload(result[key], schema, 'draft')
-    if schema['version'] == 6 and 'photos' in result:
-        result['photos'] = [dict(photo, checkpoint=upgrade_checkpoint(photo['checkpoint'])) for photo in result['photos']]
+    if 'photos' in result:
+        result['photos'] = [dict(photo, checkpoint=upgrade_checkpoint(photo['checkpoint'], schema['version'])) for photo in result['photos']]
     result['template'] = corrected_draft_template(schema, 'draft')
     return result
 
@@ -35,7 +35,7 @@ def cases():
     rng = random.Random(20261117)
     result = []
     for n in range(48):
-        schema = deepcopy(LEGACY_TEMPLATE if n % 2 == 0 else TEMPLATE)
+        schema = deepcopy(LEGACY_TEMPLATE if n % 2 == 0 else FROZEN_TEMPLATES[7])
         answers = {'FIN.03': {'value': 'Texto anterior '+str(n), 'notes': 'Nota atual '+str(n)},
                    'EST.10': {'value': 'NOK', 'notes': 'Limpeza '+str(n)},
                    'EST.18': {'value': '', 'notes': 'Observações '+str(n)},
@@ -56,7 +56,7 @@ def cases():
         result.append(report)
     # Future/ancient versions cannot be reinterpreted by assuming that an ID or
     # unit still has today's meaning. New migrations need an explicit contract.
-    for version in (3, 8, 99):
+    for version in (3, 9, 99):
         for status in ('draft', 'closed'):
             other = deepcopy(result[0])
             other['template']['version'] = version
@@ -67,6 +67,21 @@ def cases():
         collision[payload_key]['answers']['MAN.21'] = {'value': 'V'*8000, 'notes': 'N'*8000}
         collision[payload_key]['answers']['MAN.22'] = {'value': '', 'notes': 'G'*8000}
     result.append(collision)
+    # Adjacent v7 checkpoints must move as a group, with the same map for
+    # answers, signatures and original evidence. An authored NOK note may
+    # have exactly the old suggested wording without being a suggestion.
+    from app.maintenance_rules import TRIP_NOTE
+    for generated in (True, False):
+        old = deepcopy(result[1])
+        keys = [f'MAN.{n}' for n in range(11, 23)]
+        payload = {'answers': {key: {'value': 'NA', 'notes': key} for key in keys},
+                   'signatures': {'FIN.02': {'photo_id': 'signed', 'signed_by': 'Ângela'}}}
+        payload['answers']['MAN.12'] = {'value': '500 mA', 'assessment': 'NOK', 'notes': TRIP_NOTE}
+        if generated:
+            payload['answers']['MAN.12']['suggested_notes'] = TRIP_NOTE
+        old.update(payload=payload, _inflight_payload=deepcopy(payload),
+                   photos=[{'id': 'unchanged' if n == 0 else key, 'checkpoint': key} for n, key in enumerate(keys)])
+        result.append(old)
     return result
 
 
@@ -148,13 +163,15 @@ def test_maximum_legacy_notes_survive_merge_save_reload_and_export(setup, tmp_pa
     assert projected['payload']['answers']['FIN.03']['notes'] == final_text
     maintenance_text = '\n'.join(notes[key] for key in ('MAN-CUR-N', 'MAN-OLD-V', 'MAN-OLD-N'))
     assert len(maintenance_text) == 24002
-    assert projected['payload']['answers']['MAN.22']['notes'] == maintenance_text
+    assert projected['payload']['answers']['MAN.24']['notes'] == maintenance_text
     data = {'charger_id': projected['charger_id'], 'base_revision': projected['revision'],
-            'checklist_version': 7, 'status': 'draft', 'payload': projected['payload']}
+            'checklist_version': TEMPLATE["version"], 'status': 'draft', 'payload': projected['payload']}
     saved = c.put(path, headers=h, json=data)
     assert saved.status_code == 200, saved.text
     assert c.get(path, headers=h).json()['payload'] == saved.json()['payload']
-    data['payload']['answers']['MAN.21'] = {'value': 'NA', 'notes': 'Ensaio não aplicável'}
+    data['payload']['answers']['MAN.23'] = {'value': 'NA', 'notes': 'Ensaio não aplicável'}
+    data['payload']['answers']['MAN.12'] = {'value': '750 ms'}
+    data['payload']['answers']['MAN.14'] = {'value': 'NA', 'notes': 'Não testado'}
     add_signature(c, h, rid, data['payload'], revision=saved.json()['revision'])
     data.update(status='closed', base_revision=saved.json()['revision'])
     closed = c.put(path, headers=h, json=data)
@@ -165,7 +182,7 @@ def test_maximum_legacy_notes_survive_merge_save_reload_and_export(setup, tmp_pa
         document = json.loads(archive.read(next(name for name in archive.namelist() if name.endswith(".json"))))
         assert document['payload']['answers']['FIN.03']['notes'] == final_text
         assert document['payload']['answers']['EST.18']['notes'] == equipment_text
-        assert document['payload']['answers']['MAN.22']['notes'] == maintenance_text
+        assert document['payload']['answers']['MAN.24']['notes'] == maintenance_text
         pdf = archive.read(document['identifier']+'.pdf')
         (tmp_path/'merged-notes.pdf').write_bytes(pdf)
         # Qt can wrap at hyphens, including across a page boundary. Remove only
@@ -192,7 +209,7 @@ def test_rejected_frozen_upload_can_reopen_as_current_draft_atomically(setup):
     ordinary['template'].pop('frozen_upload')
     upgraded = project(ordinary)
     data = {'charger_id': frozen['charger_id'], 'base_revision': frozen['revision'],
-            'checklist_version': 7, 'status': 'draft', 'payload': upgraded['payload']}
+            'checklist_version': TEMPLATE["version"], 'status': 'draft', 'payload': upgraded['payload']}
     # Stale and malformed reopen requests must not even remove the marker.
     stale = c.put(path, headers=h, json={**data, 'base_revision': 99})
     assert stale.status_code == 409
@@ -201,10 +218,10 @@ def test_rejected_frozen_upload_can_reopen_as_current_draft_atomically(setup):
     assert c.get(path, headers=h).json() == frozen
     saved = c.put(path, headers=h, json=data)
     assert saved.status_code == 200, saved.text
-    assert saved.json()['template']['version'] == 7
+    assert saved.json()['template']['version'] == 8
     assert 'frozen_upload' not in saved.json()['template']
     assert c.get(path, headers=h).json()['payload'] == upgraded['payload']
-    assert {p['checkpoint'] for p in saved.json()['photos']} == {'MAN.22', 'EST.18'}
+    assert {p['checkpoint'] for p in saved.json()['photos']} == {'MAN.24', 'EST.18'}
     for pid in pids:
         assert c.get(path+'/photos/'+pid, headers=h).content == png
 
@@ -218,7 +235,7 @@ def test_projection_still_rejects_malformed_or_oversized_input(setup, bad_answer
     path = '/api/reports/'+rid
     before = c.get(path, headers=h).json()
     result = c.put(path, headers=h, json={'charger_id': before['charger_id'],
-        'base_revision': before['revision'], 'checklist_version': 7, 'status': 'draft',
+        'base_revision': before['revision'], 'checklist_version': TEMPLATE["version"], 'status': 'draft',
         'payload': {'answers': bad_answers}})
     assert result.status_code == 422, result.text
     assert c.get(path, headers=h).json() == before

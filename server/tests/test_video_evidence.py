@@ -78,7 +78,7 @@ def test_video_upload_retry_delete_and_required_photo(setup, video):
     revision = removed.json()["revision"]
     data["base_revision"] = str(revision)
     assert c.put(path, headers=h, data=data, files={"file":("clip.mp4",video)}).status_code == 200
-    trip_data=dict(data,checkpoint='MAN.12')
+    trip_data=dict(data,checkpoint='MAN.13')
     trip_path=f'/api/reports/{rid}/photos/{uuid.uuid4()}'
     assert c.put(trip_path,headers=h,data=trip_data,files={'file':('trip.jpg',_jpeg())}).status_code==200
     picture_path = f'/api/reports/{rid}/photos/{uuid.uuid4()}'

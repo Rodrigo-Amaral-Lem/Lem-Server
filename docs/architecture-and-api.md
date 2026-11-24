@@ -78,10 +78,13 @@ are enabled only when `LEM_API_DOCS=1`.
 | PUT `/api/contracts/{cid}/users/{user_id}` | Assign access |
 | GET `/api/admin/deleted-contracts`; POST `/api/contracts/{cid}/trash`, `/restore` | Contract trash workflow |
 | GET `/api/contracts/{cid}/chargers` | Contract memberships with the current central station details and report summaries |
+| GET `/api/contracts/{cid}/removed-chargers`; POST `/api/contracts/{cid}/chargers/{charger_id}/restore` | Administrator lists recoverable preventive IDs and their `purge_after`, then restores the association and its reports. Reimport within 14 days has the same effect. |
+| GET `/api/corrective-contracts/{cid}/members`; DELETE `/api/corrective-contracts/{cid}/members/{sid}`; POST `/api/corrective-contracts/{cid}/members/{sid}/restore` | Administrator lists active and recoverable station IDs, removes coverage for 14 days or restores it together with the interventions removed by that operation. |
+| POST `/api/interventions/{cid}/trash`; POST `/api/contracts/{cid}/restore` | Administrator deletes a pending intervention with `{"confirmation":"APAGAR"}` or restores it within 48 hours. GET `/api/admin/deleted-contracts` identifies recoverable requests by `kind` and `purge_after`. A closed report blocks this deletion (409). |
 | GET / PUT `/api/contracts/{cid}/chargers/{charger_id}/notes` | Read current membership notes, or save them as an administrator using `notes` and `base_revision`. Android and desktop use the same permissions. |
 | GET `/api/stations` | One record per PCVE across all active assigned contracts for technicians, or the entire catalogue for administrators |
-| GET `/api/stations/{sid}/reports` | Readable report summaries for a visible PCVE, including removed memberships and reports granted through individual work-order visits. Trash and correction visibility follow report access rules. |
-| DELETE `/api/contracts/{cid}/chargers/{charger_id}` | Administrator removes only the contract membership. Repeated requests are idempotent; reimporting restores the membership UUID |
+| GET `/api/stations/{sid}/reports` | Readable report summaries for a visible PCVE, including reports granted through individual work-order visits. IDs currently held for 14-day recovery are excluded. Trash and correction visibility follow report access rules. |
+| DELETE `/api/contracts/{cid}/chargers/{charger_id}` | Administrator removes the preventive ID for 14 days. Repeating removal preserves the deadline. During this period its reports are hidden |
 | POST `/api/stations/import`; PATCH `/api/stations/{sid}` | Desktop administrator Excel preview and atomic import, or revision-checked edit |
 | GET `/api/companies/{company}/import-profile` | Saved mapping |
 | POST `/api/imports/analyse`, `/api/contracts/{cid}/import` | Excel analysis, preview and atomic import |
@@ -212,16 +215,13 @@ media by checkpoint. Media filenames share the identifier and add the evidence U
 UUIDs address reports and evidence in the API and storage.
 [Naming rules](../../Common/docs/report-contract.md#public-report-identifiers-and-export-names)
 
-The lifespan task checks expired contract trash roughly every minute. Export/media limits and retry
+The lifespan task checks expired contract trash and removed IDs roughly every minute. The 48-hour and 14-day limits use UTC and exclude the exact deadline. Retrying deletion preserves the original expiry. A job already deleted separately is not restored with its coverage. Restore coverage before separately restoring the job. Export/media limits and retry
 semantics are documented in [security](../../Common/docs/security.md); operator procedures are in
 [administration](administration.md).
 
-### Checklist v7 migration and compatibility
+### Checklist v8 migration and compatibility
 
-Version 0.2.6 is the minimum client for template v7. Draft reads project legacy v6 data; the next
-write persists the template, answer migration and photo checkpoint moves under the same transaction
-and revision check. Correction creation upgrades the copy, never the closed original. Validation
-recomputes MAN.12/MAN.18 independently from client assessments. See Common/docs/report-contract.md.
+App/API 0.11.1 use v8. The server checks client compatibility on login and authenticated requests. Draft reads project v6 through v7 to v8 and v7 directly to v8. The next write persists the projection and moves the evidence checkpoints atomically with the revision check. Creating a correction upgrades its working copy and preserves the closed original. The server recalculates MAN.13 (mA) and MAN.20 (Ω) using MAN.11. MAN.12 and MAN.14 store integer milliseconds or NA. MAN.14 also records the technician’s result. See the [report contract](../../Common/docs/report-contract.md).
 Independent photo uploads also persist that migration before validating the projected checkpoint.
 Invalid media and stale revisions leave the saved legacy report and originals intact.
 Pre-v6 correction copies use the current form with an optional `ANT` section preserving old
@@ -263,7 +263,7 @@ At the UTC deadline the order disappears from the API. The background cleanup ru
 
 Limited contracts include `order_targets` so clients can retain authorised offline rows when another contract refreshes. Planning reserves one ordinary draft per pending membership. Draft summaries expose owner, report revision and attachment count. At resolution, any other existing drafts are recorded for read-only recovery by their still-assigned owners. A removed closed report retains its identifier and completion record with `report_removed` set.
 
-Detached pending memberships remain unavailable for new drafts and still advertise existing drafts.
+During 14-day preventive recovery the catalogue excludes the ID and its server-side reports, including from work orders, station history and export. Restoring the ID reopens normal access. Legacy detachments without a recovery deadline keep the previous draft visibility.
 An exact report grant remains valid for an advertised resolved report after the pending visit's scope
 leaves the contract catalogue. A closed report GET returns the current versioned `station_update`
 alongside the immutable report snapshot so a lost closure response can be reconciled safely.
@@ -286,4 +286,4 @@ Include `work_item_id` on the first and subsequent PUTs from an order. The serve
 
 Recovery drafts include `work_item_recovery: true` in report and membership summaries. The owner picker and transfer endpoint evaluate the exact report grant. A scoped technician can receive a recovery draft from their original assigned visit. An independent full grant also gives access. Transfers leave the recovery draft read-only and bound to that same visit.
 
-A contract Excel preview returns an `operation_id`. Send the same ID, workbook and mapping on every retry of its commit. The receipt returns the previous result and preserves intervening note edits. A fresh preview starts an independent import. Both import paths report invalid connector cells during preview and reject the batch at commit. For contract export, authorized users can include detached memberships within their existing report scope with `GET /api/contracts/{id}/chargers?include_detached=true`.
+A contract Excel preview returns an `operation_id`. Send the same ID, workbook and mapping on every retry of its commit. The receipt returns the previous result and preserves intervening note edits. A fresh preview starts an independent import. Both import paths report invalid connector cells during preview and reject the batch at commit. For contract export, authorized users can include legacy detached memberships within their existing report scope. IDs with a 14-day recovery marker stay hidden even with `GET /api/contracts/{id}/chargers?include_detached=true`.

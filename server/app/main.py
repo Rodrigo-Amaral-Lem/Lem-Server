@@ -37,7 +37,7 @@ from .models import (
     Assignment,
     Charger,
     set_contract_notes,
-    DetachedCharger,
+    DetachedCharger, RemovedCharger, CoverageTrashLink, RemovedCoverage,
     attached_charger,
     Station,
     Report,
@@ -58,36 +58,23 @@ from .importer import analyse, parse
 from .import_profiles import normalize_contract_notes
 from .images import InvalidImage
 from .media import inspect_evidence
-from .checklist import for_charger, corrected_draft_template, corrected_draft_payload, connector_names
+from .checklist import TEMPLATE, FROZEN_TEMPLATES, for_charger, corrected_draft_template, corrected_draft_payload, connector_names
 from .measurements import digits as measurement_digits, format_value, not_applicable, canonical, milliamp
 from .maintenance_rules import apply_assessments, reading as maintenance_reading
 from .maintenance_migration import upgrade_checkpoint, persist_upgrade
 from .exports import write_bundle, file_chunks, MissingEvidence
 from .report_naming import EVIDENCE_EXTENSIONS, content_disposition, evidence_stem, report_identifier
-from .contract_trash import RETENTION, utc_now, purge_expired
+from .contract_trash import (RETENTION, MEMBERSHIP_RETENTION, INTERVENTION_RETENTION, reattach_charger,
+                             utc_now, purge_expired, purge_memberships)
 from .work_order_retention import purge_cancelled_orders
 from . import corrections, interventions, work_orders
 
 SESSION_LIFETIME = timedelta(days=365)
 from .evidence_cache import EvidenceCache, EvidenceResponse
 
-TEMPLATE = json.loads(
-    (
-        Path(
-            os.getenv(
-                "CHECKLIST_FILE",
-                str(Path(__file__).resolve().parents[2] / "shared/checklist-v1.json"),
-            )
-        )
-    ).read_text(encoding="utf-8")
-)
+LEGACY_TEMPLATE = FROZEN_TEMPLATES[6]
 
 
-# Preserve already-closed offline v6 reports during an upgrade. They are history,
-# unlike editable drafts/correction copies, and must retain their original checklist.
-LEGACY_TEMPLATE = json.loads((Path(__file__).resolve().parents[2] / "shared/checklist-v6.json").read_text(encoding="utf-8"))
-
-# Docker copies shared into server/shared; development uses sibling shared.
 class Login(BaseModel):
     email: str = Field(max_length=254)
     password: str = Field(max_length=200)
@@ -189,6 +176,13 @@ def uuid_check(value):
 
 
 # Create an engine/session factory, bootstrap only an empty installation, and register routes.
+LEGACY_TEMPLATE = FROZEN_TEMPLATES[6]
+
+
+class DetachedMembership(Exception):
+    """Return the existing offline-sync conflict for an unavailable contract member."""
+
+
 def create_app(url=None, bootstrap=True):
     engine, Factory = database(url)
     if bootstrap:
@@ -217,7 +211,7 @@ def create_app(url=None, bootstrap=True):
 
         async def sweep():
             while not stop.is_set():
-                for cleanup in (purge_expired, purge_cancelled_orders):
+                for cleanup in (purge_expired, purge_memberships, purge_cancelled_orders):
                     try:
                         await asyncio.to_thread(cleanup, Factory)
                     except Exception:
@@ -258,6 +252,13 @@ def create_app(url=None, bootstrap=True):
         openapi_url="/openapi.json" if api_docs else None,
     )
     app.state.client_policy = policy
+    @app.exception_handler(DetachedMembership)
+    async def detached_membership(request, exc):
+        return JSONResponse(status_code=409, content={
+            "reason": "pcve_membership_detached",
+            "detail": "Este PCVE foi retirado do contrato. O rascunho local foi conservado.",
+        })
+
     # Missing/ill-typed fields can make Pydantic include the original input in
     # its errors. A credential form must never send that input back to a client.
     @app.exception_handler(RequestValidationError)
@@ -376,6 +377,8 @@ def create_app(url=None, bootstrap=True):
             # A trashed contract is unavailable, not a permanently deleted report.
             # Do not send report HTTP 410: older clients erase local copies for it.
             raise HTTPException(423, "Contrato apagado; aguarda recuperação pelo administrador. Dados locais conservados.")
+        if target and db.get(RemovedCharger, target):
+            raise DetachedMembership()
         return c
 
     def raise_deleted_report(db, user, tombstone):
@@ -481,8 +484,8 @@ def create_app(url=None, bootstrap=True):
             "started": r.started,
             "updated": r.updated,
             "finished": r.finished,
-            "photos": [dict(p, checkpoint=upgrade_checkpoint(p["checkpoint"]))
-                       if projection_status == "draft" and schema.get("version") == 6 else p
+            "photos": [dict(p, checkpoint=upgrade_checkpoint(p["checkpoint"], schema["version"]))
+                       if projection_status == "draft" and schema.get("version") in (6, 7) else p
                        for p in photos],
         }
 
@@ -671,16 +674,26 @@ def create_app(url=None, bootstrap=True):
     def deleted_contracts(u=Depends(admin), db=Depends(db_dep)):
         # Expired entries cannot be recovered, even if the next physical sweep
         # has not run yet (or the server was stopped at their exact deadline).
-        return [dict(id=c.id, name=c.name, deleted_at=t.deleted_at,
+        return [dict(id=c.id, name=c.name, kind=c.kind, deleted_at=t.deleted_at,
                      purge_after=t.purge_after, deleted_by=t.deleted_by)
                 for c, t in db.execute(select(Contract, ContractTrash)
                     .join(ContractTrash, ContractTrash.contract_id == Contract.id)
-                    .where(ContractTrash.purge_after > now())
+                    .where(ContractTrash.purge_after > now(), ~Contract.id.in_(select(CoverageTrashLink.job_id)))
                     .order_by(ContractTrash.deleted_at.desc()))]
 
     @app.post("/api/contracts/{cid}/trash")
     def trash_contract(cid: str, body: TrashContractInput, u=Depends(admin), db=Depends(db_dep)):
         interventions.require_preventive_scope(db, cid)
+        return trash_scope(cid, body, u, db)
+
+    @app.post("/api/interventions/{cid}/trash")
+    def trash_intervention(cid: str, body: TrashContractInput, u=Depends(admin), db=Depends(db_dep)):
+        if not db.get(interventions.Intervention, cid):
+            raise HTTPException(404, "Intervenção inexistente.")
+        return trash_scope(cid, body, u, db)
+
+    def trash_scope(cid, body, u, db):
+        lock_catalogue(db)
         if body.confirmation != "APAGAR":
             raise HTTPException(422, 'Escreva exatamente "APAGAR" para confirmar')
         c = db.scalar(select(Contract).where(Contract.id == cid).with_for_update())
@@ -689,9 +702,13 @@ def create_app(url=None, bootstrap=True):
         t = db.get(ContractTrash, cid)
         if t is None:
             instant = utc_now()
+            job = db.get(interventions.Intervention, cid)
+            if job and db.scalar(select(Report.id).where(Report.charger_id == cid, Report.status == "closed").limit(1)):
+                raise HTTPException(409, "A intervenção já tem um relatório fechado.")
+            duration = INTERVENTION_RETENTION if job else RETENTION
             t = ContractTrash(contract_id=cid, deleted_by=u.id,
                               deleted_at=instant.isoformat(),
-                              purge_after=(instant + RETENTION).isoformat())
+                              purge_after=(instant + duration).isoformat())
             db.add(t)
             audit(db, u, "contract.trash", cid)
             db.commit()
@@ -700,13 +717,19 @@ def create_app(url=None, bootstrap=True):
 
     @app.post("/api/contracts/{cid}/restore")
     def restore_contract(cid: str, u=Depends(admin), db=Depends(db_dep)):
+        lock_catalogue(db)
         c = db.scalar(select(Contract).where(Contract.id == cid).with_for_update())
         if c is None:
             raise HTTPException(404, "Contrato inexistente ou já eliminado definitivamente")
         t = db.get(ContractTrash, cid)
         if t is not None:
             if t.purge_after <= now():
-                raise HTTPException(410, "Prazo de recuperação de 30 dias terminado")
+                raise HTTPException(410, "Prazo de recuperação terminado")
+            job = db.get(interventions.Intervention, cid)
+            charger = db.get(Charger, cid) if job else None
+            if db.get(CoverageTrashLink, cid) or (job and job.corrective_contract_id and db.get(
+                    RemovedCoverage, (job.corrective_contract_id, charger.station_id))):
+                raise HTTPException(409, "Recupere primeiro o ID no contrato de corretivas.")
             db.delete(t)
             audit(db, u, "contract.restore", cid)
             db.commit()
@@ -759,7 +782,8 @@ def create_app(url=None, bootstrap=True):
         members = select(Charger).where(Charger.contract_id == cid)
         if not include_detached:
             members = members.where(attached_charger())
-        visible = Charger.contract_id == cid
+        members = members.where(~Charger.id.in_(select(RemovedCharger.charger_id)))
+        visible = (Charger.contract_id == cid) & ~Charger.id.in_(select(RemovedCharger.charger_id))
         if limited:
             granted = work_orders.assigned_items(u.id)
             members = members.where(Charger.id.in_(granted))
@@ -900,9 +924,32 @@ def create_app(url=None, bootstrap=True):
             raise HTTPException(404, "PCVE inexistente neste contrato")
         if not db.get(DetachedCharger, charger_id):
             db.add(DetachedCharger(charger_id=charger_id))
+            db.add(RemovedCharger(charger_id=charger_id, purge_after=(utc_now() + MEMBERSHIP_RETENTION).isoformat()))
             audit(db, u, "contract.detach-pcve", charger_id)
         db.commit()
         return {"ok": True}
+
+    @app.get("/api/contracts/{cid}/removed-chargers")
+    def removed_chargers(cid: str, u=Depends(admin), db=Depends(db_dep)):
+        accessible(db, u, cid)
+        rows = (select(Charger.id, Charger.external_id, RemovedCharger.purge_after)
+                .join(RemovedCharger).where(Charger.contract_id == cid, RemovedCharger.purge_after > now())
+                .order_by(Charger.external_id))
+        return [dict(row._mapping) for row in db.execute(rows)]
+
+    @app.post("/api/contracts/{cid}/chargers/{charger_id}/restore")
+    def restore_charger(cid: str, charger_id: str, u=Depends(admin), db=Depends(db_dep)):
+        lock_catalogue(db)
+        accessible(db, u, cid, write=True)
+        charger = db.get(Charger, charger_id)
+        if charger is None or charger.contract_id != cid or db.get(interventions.Intervention, cid):
+            raise HTTPException(404, "ID inexistente neste contrato.")
+        if db.get(DetachedCharger, charger_id):
+            if not db.get(RemovedCharger, charger_id) or not reattach_charger(db, charger_id, restore=True):
+                raise HTTPException(410, "O prazo de recuperação deste ID terminou.")
+            audit(db, u, "contract.restore-pcve", charger_id)
+            db.commit()
+        return {"restored": True}
 
     @app.get("/api/stations/{sid}/reports")
     def station_reports(sid: str, u=Depends(user_dep), db=Depends(db_dep)):
@@ -918,7 +965,7 @@ def create_app(url=None, bootstrap=True):
                  .join(Charger, Charger.id == Report.charger_id)
                  .join(Contract, Contract.id == Charger.contract_id)
                  .outerjoin(ReportCorrection, ReportCorrection.id == Report.id)
-                 .where(Charger.station_id == sid, ~select(ContractTrash.contract_id)
+                 .where(Charger.station_id == sid, ~Charger.id.in_(select(RemovedCharger.charger_id)), ~select(ContractTrash.contract_id)
                         .where(ContractTrash.contract_id == Contract.id).exists())
                  .order_by(Report.started.desc(), Report.id))
         if u.role != "admin":
@@ -1068,7 +1115,7 @@ def create_app(url=None, bootstrap=True):
             station = get_or_create_station(db, rec["external_id"], rec["details"], stations)
             c = existing.get(rec["external_id"])
             if c:
-                db.execute(delete(DetachedCharger).where(DetachedCharger.charger_id == c.id))
+                reattach_charger(db, c.id)
                 c.station = station
                 changed += 1
             else:
@@ -1134,10 +1181,10 @@ def create_app(url=None, bootstrap=True):
     def validate_report_payload(db, r, body):
         # Both ordinary closure and direct correction commits must enforce current
         # draft rules. A copied historical template must not bypass photo checks.
-        legacy_closure = body.checklist_version == 6 and (body.frozen_history or body.status == "closed") and r.template.get("version") == 6
+        legacy_closure = body.checklist_version in FROZEN_TEMPLATES and (body.frozen_history or body.status == "closed") and r.template.get("version") == body.checklist_version
         if body.frozen_history:
             if not legacy_closure or not body.payload.get("started") or not body.payload.get("finished"):
-                raise HTTPException(422, "O envio histórico exige um report v6 já fechado, com início e fim")
+                raise HTTPException(422, "O envio histórico exige um report anterior já fechado, com início e fim")
             corrections.checked_times(body.payload)
         if r.template.get("frozen_upload") and not legacy_closure:
             if body.status != "draft" or body.checklist_version != TEMPLATE["version"]:
@@ -1191,7 +1238,7 @@ def create_app(url=None, bootstrap=True):
         if r.template.get("version", 0) >= 7:
             # Recompute independently of the client; never silently refill a note
             # the technician cleared to enter their own observation.
-            answers = apply_assessments(answers)
+            answers = apply_assessments(answers, version=r.template["version"])
             body.payload["answers"] = answers
         try:
             validate_extras(body.payload, items)
@@ -1201,10 +1248,10 @@ def create_app(url=None, bootstrap=True):
             # Drafts retain in-progress typing (e.g. a trailing decimal separator).
             # A closed report must contain complete, formatted measurements.
             for key, answer in answers.items():
-                measurement_key = canonical(key) if r.template.get("version", 0) < 7 and milliamp(key) else key
+                measurement_key = canonical(key) if r.template.get("version", 0) < 7 and milliamp(key) else items[key].get("measurement_key", key)
                 if measurement_digits(measurement_key):
                     try:
-                        answer["value"] = format_value(measurement_key, answer.get("value", ""))
+                        answer["value"] = format_value(measurement_key, answer.get("value", ""), checkpoint=key)
                     except ValueError as error:
                         raise HTTPException(422, str(error))
             photos = photo_metadata(db, r.id)
@@ -1220,15 +1267,18 @@ def create_app(url=None, bootstrap=True):
                 value = a.get("value", "").strip()
                 if not value and not item.get("optional"):
                     errors.append(key + ": falta resposta")
+                if item.get("assessment_required") and not not_applicable(value) and a.get("assessment") not in ("OK", "NOK"):
+                    errors.append(key + ": escolha OK, NOK ou N/A")
                 if item.get("reading_required") and value.upper() in ("OK", "NOK"):
                     errors.append(key + ": falta valor medido")
                 if not item.get("notes_disabled") and (value == "NOK" or a.get("assessment") == "NOK") and not a.get("notes", "").strip():
                     errors.append(key + ": NOK precisa de observação")
-                if item.get("na_notes_required") and not_applicable(value) and not a.get("notes", "").strip():
+                test_na = not_applicable(value) and not (item.get("assessment_required") and a.get("assessment"))
+                if item.get("na_notes_required") and test_na and not a.get("notes", "").strip():
                     errors.append(key + ": N/A precisa de observação")
                 if (
                     item["photo_required"]
-                    and (item.get("photo_always") or not not_applicable(value))
+                    and (item.get("photo_always") or not test_na)
                     and not any(p["checkpoint"] == key and not p["mime"].startswith("video/") for p in photos)
                 ):
                     errors.append(key + ": falta fotografia")
@@ -1312,17 +1362,14 @@ def create_app(url=None, bootstrap=True):
             if planned and db.scalar(work_orders.current_drafts(planned).limit(1)):
                 raise HTTPException(409, "Este ID já tem um rascunho. Consulte o proprietário na ordem. A cópia local foi conservada.")
             if db.get(DetachedCharger, charger.id):
-                return JSONResponse(status_code=409, content={
-                    "reason": "pcve_membership_detached",
-                    "detail": "Este PCVE foi retirado do contrato. O rascunho local foi conservado.",
-                })
-            legacy_closed = body.checklist_version == 6 and (body.status == "closed" or body.frozen_history)
+                raise DetachedMembership()
+            legacy_closed = body.checklist_version in FROZEN_TEMPLATES and (body.status == "closed" or body.frozen_history)
             if body.checklist_version != TEMPLATE["version"] and not legacy_closed:
                 raise HTTPException(409, "A checklist mudou. Crie um novo report; o rascunho antigo foi conservado para consulta")
             if body.base_revision != 0:
                 raise HTTPException(409, "Report inexistente com revisão diferente de zero")
             try:
-                checklist = for_charger(LEGACY_TEMPLATE if legacy_closed else TEMPLATE, charger.details)
+                checklist = for_charger(FROZEN_TEMPLATES[body.checklist_version] if legacy_closed else TEMPLATE, charger.details)
                 # Older compatible clients still send the former Type 2 name.
                 # Compare physical connector order/count after alias normalization.
                 supplied_connectors = (connector_names(body.load_test_connectors)

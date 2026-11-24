@@ -14,7 +14,9 @@ from sqlalchemy import delete, func, select
 from .import_profiles import normalize_contract_notes
 from .importer import cell_text, workbook
 from .models import (Assignment, Charger, Contract, ContractChargerNote, CorrectiveContract, CorrectiveCoverage,
-                     Intervention, Report, Station, User, set_contract_notes)
+                     Intervention, Report, Station, User, set_contract_notes, RemovedCoverage,
+                     ContractTrash, CoverageTrashLink, DeletedIntervention)
+from .contract_trash import MEMBERSHIP_RETENTION, utc_now
 from .stations import lock_catalogue, stations_for_import
 from .work_orders import assigned_items, current_ordinary_drafts, lisbon_now
 
@@ -190,6 +192,66 @@ def register(app, db_dep, user_dep, admin, audit, visible_stations, file_bytes, 
         db.commit()
         return {**contract_data(contract), "count": len(ids)}
 
+
+    @app.get("/api/corrective-contracts/{cid}/members")
+    def members(cid: UUID, u=Depends(admin), db=Depends(db_dep)):
+        key = str(cid)
+        active = (select(Station.id, Station.external_id).join(CorrectiveCoverage)
+                  .where(CorrectiveCoverage.contract_id == key))
+        removed = (select(Station.id, Station.external_id, RemovedCoverage.purge_after).join(RemovedCoverage)
+                   .where(RemovedCoverage.contract_id == key, RemovedCoverage.purge_after > utc_now().isoformat()))
+        rows = [dict(id=sid, external_id=name) for sid, name in db.execute(active)]
+        rows.extend(dict(id=sid, external_id=name, purge_after=end) for sid, name, end in db.execute(removed))
+        return sorted(rows, key=lambda row: row["external_id"])
+
+    @app.delete("/api/corrective-contracts/{cid}/members/{sid}")
+    def remove_member(cid: UUID, sid: UUID, u=Depends(admin), db=Depends(db_dep)):
+        key, station = str(cid), str(sid)
+        lock_catalogue(db)
+        existing = db.get(RemovedCoverage, (key, station))
+        if existing:
+            return {"purge_after": existing.purge_after}
+        coverage = db.get(CorrectiveCoverage, (key, station))
+        if not coverage:
+            raise HTTPException(404, "ID ausente do contrato.")
+        instant = utc_now()
+        deadline = (instant + MEMBERSHIP_RETENTION).isoformat()
+        # A job already deleted independently keeps its own 48-hour deadline.
+        jobs = (select(Contract).join(Intervention, Intervention.id == Contract.id)
+                .join(Charger, Charger.id == Contract.id)
+                .where(Intervention.corrective_contract_id == key, Charger.station_id == station)
+                .order_by(Contract.id).with_for_update())
+        for scope in db.scalars(jobs):
+            if db.get(ContractTrash, scope.id):
+                continue
+            db.add(ContractTrash(contract_id=scope.id, deleted_by=u.id, deleted_at=instant.isoformat(), purge_after=deadline))
+            db.flush()
+            db.add(CoverageTrashLink(job_id=scope.id, contract_id=key, station_id=station))
+        db.delete(coverage)
+        db.add(RemovedCoverage(contract_id=key, station_id=station, purge_after=deadline))
+        audit(db, u, "corrective-contract.remove-pcve", key + ":" + station)
+        db.commit()
+        return {"purge_after": deadline}
+
+    @app.post("/api/corrective-contracts/{cid}/members/{sid}/restore")
+    def restore_member(cid: UUID, sid: UUID, u=Depends(admin), db=Depends(db_dep)):
+        key, station = str(cid), str(sid)
+        lock_catalogue(db)
+        if db.get(CorrectiveCoverage, (key, station)):
+            return {"restored": True}
+        entry = db.get(RemovedCoverage, (key, station))
+        if entry is None or entry.purge_after <= utc_now().isoformat():
+            raise HTTPException(410, "O prazo de recuperação deste ID terminou.")
+        scopes = list(db.scalars(select(CoverageTrashLink.job_id).where(
+            CoverageTrashLink.contract_id == key, CoverageTrashLink.station_id == station)))
+        # Remove only the holds created by this membership operation.
+        db.execute(delete(ContractTrash).where(ContractTrash.contract_id.in_(scopes)))
+        db.add(CorrectiveCoverage(contract_id=key, station_id=station))
+        db.delete(entry)
+        audit(db, u, "corrective-contract.restore-pcve", key + ":" + station)
+        db.commit()
+        return {"restored": True}
+
     @app.put("/api/interventions/{iid}")
     def create(iid: UUID, body: NewIntervention, u=Depends(user_dep), db=Depends(db_dep)):
         if u.role != "admin" and (body.kind != "commissioning" or body.technician or body.notes):
@@ -198,6 +260,8 @@ def register(app, db_dep, user_dep, admin, audit, visible_stations, file_bytes, 
         digest = hashlib.sha256(json.dumps(body.model_dump(mode="json", exclude_unset=True),
                                           sort_keys=True).encode("utf-8")).hexdigest()
         lock_catalogue(db)
+        if db.get(DeletedIntervention, key) or db.get(ContractTrash, key):
+            raise HTTPException(409, "Este pedido foi apagado.")
         previous = db.get(Intervention, key)
         if previous:
             if previous.created_by == u.id and previous.request_digest == digest:
@@ -226,7 +290,10 @@ def register(app, db_dep, user_dep, admin, audit, visible_stations, file_bytes, 
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
         tech = technician_id(db, body.technician) if u.role == "admin" else u.id
-        sequence = db.scalar(select(func.count()).select_from(Intervention)) + 1
+        # A purge transfers a reference to the tombstone table atomically. Read
+        # both counts in the same database snapshot while holding the creation lock.
+        sequence = db.scalar(select(select(func.count()).select_from(Intervention).scalar_subquery()
+                                    + select(func.count()).select_from(DeletedIntervention).scalar_subquery() + 1))
         code = f"{'COR' if body.kind == 'corrective' else 'COM'}-{sequence:06d}"
         scope = Contract(id=key, company=coverage.company if coverage else "", year=today.year,
                          semester=1 if today.month <= 6 else 2, kind=body.kind, name=code)
@@ -252,6 +319,8 @@ def register(app, db_dep, user_dep, admin, audit, visible_stations, file_bytes, 
             raise HTTPException(404, "Intervenção inexistente.")
         # Report writes also take the scope lock before touching the draft.
         db.scalar(select(Contract.id).where(Contract.id == key).with_for_update())
+        if db.get(ContractTrash, key):
+            raise HTTPException(423, "Pedido em recuperação.")
         current = db.scalar(select(Assignment.user_id).where(Assignment.contract_id == key))
         handoff = body.handoff
         stale_draft = "O rascunho mudou. Atualize a intervenção antes de o transferir."

@@ -19,7 +19,7 @@ def milliamp(key):
 
 def digits(key):
     # Current readings are specific to MAN.11/12. Other MAN fields reuse the PC02 rules.
-    if milliamp(key):
+    if milliamp(key) or key == "ms":
         return 6
     key = canonical(key)
     if key in VOLTAGES:
@@ -30,6 +30,8 @@ def digits(key):
 
 
 def unit(key):
+    if key == "ms":
+        return "ms"
     if milliamp(key):
         return "mA"
     key = canonical(key)
@@ -45,7 +47,7 @@ def not_applicable(value):
     return text in ("NA", "N/A", "NAO APLICAVEL")
 
 
-def format_value(key, value):
+def format_value(key, value, *, checkpoint=None):
     value = value.strip()
     if key == "MAN.18" and value.upper() in ("OK", "NOK"):
         return value.upper()
@@ -56,15 +58,15 @@ def format_value(key, value):
         return "Não Aplicável"
 
     expected_unit = unit(key)
-    optional_fraction = "" if milliamp(key) else r"(?:[.,][0-9]{1,2})?"
+    optional_fraction = "" if milliamp(key) or key == "ms" else r"(?:[.,][0-9]{1,2})?"
     number_pattern = rf"[0-9]{{1,{max_digits}}}{optional_fraction}"
     match = re.fullmatch(rf"({number_pattern})(?:\s*{expected_unit})?", value, re.I)
     if not match:
-        if milliamp(key):
-            detail = "6 algarismos, sem casas decimais, em mA"
+        if milliamp(key) or key == "ms":
+            detail = f"6 algarismos, sem casas decimais, em {expected_unit}"
         else:
             detail = f"{max_digits} algarismos inteiros e 2 casas decimais"
-        raise ValueError(f"{key}: máximo {detail}, ou Não Aplicável")
+        raise ValueError(f"{checkpoint or key}: máximo {detail}, ou Não Aplicável")
     return match[1].replace(".", ",") + " " + expected_unit
 
 

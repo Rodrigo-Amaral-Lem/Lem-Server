@@ -21,7 +21,7 @@ def report(setup):
     body={'checklist_version':TEMPLATE['version'],'charger_id':charger['id'],'base_revision':0,'payload':{'answers':answers()}}
     r=c.put('/api/reports/'+rid,headers=h,json=body)
     assert r.status_code==200,r.text
-    photo(c,h,rid,'MAN.12')
+    photo(c,h,rid,'MAN.13')
     pid=photo(c,h,rid,'FIN.02')
     body['payload']['answers']['FIN.02']={'value':'Técnico de teste','notes':''}
     body['payload']['signatures']={'FIN.02':{'photo_id':pid,'signed_by':'Técnico de teste','signed_at':'2026-11-15T10:00:00Z'}}
@@ -45,9 +45,9 @@ def test_generated_connector_rules_are_inherited_for_every_connector():
     items=[i for s in t['sections'] for i in s['items'] if i['id'].startswith('CARG.01.')]
     assert len(items)==3 and all(i['photo_required'] and i['na_notes_required'] for i in items)
     labels={i['id']:i for s in t['sections'] for i in s['items']}
-    assert labels['MAN.18']['label']=='Valor da resistência da terra'
-    assert labels['MAN.19']['label']=='Verifique o estado dos filtros'
-    assert all(labels[f'MAN.{i:02d}']['allow_status'] for i in range(14,19))
+    assert labels['MAN.20']['label']=='Valor da resistência da terra'
+    assert labels['MAN.21']['label']=='Verifique o estado dos filtros'
+    assert all(labels[f'MAN.{i:02d}']['allow_status'] for i in range(16,21))
     assert labels['CARG.05']['label']=='Verifique o correto funcionamento dos meters no carregador - tire fotografias'
 
 
@@ -80,7 +80,7 @@ def test_video_does_not_replace_required_photo(setup):
     assert r.status_code==422 and 'falta fotografia' in r.text
 
 
-@pytest.mark.parametrize('key',['MAN.12','MAN.18'])
+@pytest.mark.parametrize('key',['MAN.13','MAN.20'])
 @pytest.mark.parametrize('value',['OK','NOK'])
 def test_manual_ok_nok_cannot_replace_reading(setup,key,value):
     c,h,rid,body=report(setup)
@@ -88,9 +88,9 @@ def test_manual_ok_nok_cannot_replace_reading(setup,key,value):
     r=c.put('/api/reports/'+rid,headers=h,json=body)
     assert r.status_code==422,r.text
     assert key in r.text
-    # MAN.18 now requires photographic evidence for applicable readings.
-    if key == 'MAN.18':
+    # MAN.20 now requires photographic evidence for applicable readings.
+    if key == 'MAN.20':
         photo(c, h, rid, key)
-    body['payload']['answers'][key]={'value':'30 mA' if key=='MAN.12' else '120 Ω','assessment':value,'notes':'Teste efetuado'}
+    body['payload']['answers'][key]={'value':'30 mA' if key=='MAN.13' else '120 Ω','assessment':value,'notes':'Teste efetuado'}
     r=c.put('/api/reports/'+rid,headers=h,json=body)
     assert r.status_code==200,r.text

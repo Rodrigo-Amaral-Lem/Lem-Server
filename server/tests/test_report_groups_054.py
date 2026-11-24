@@ -16,11 +16,11 @@ def test_exact_groups_questions_and_photo_requirements():
     sections=TEMPLATE['sections']
     assert [s['id'] for s in sections]==['SEG','SITE','QVE','EST','MAN','CARG','FIN']
     groups={s['id']:s['items'] for s in sections}
-    # EST.10 was retired; MAN.21 now holds after-maintenance photos and the
-    # previous general observations moved to MAN.22 without renumbering EST.
-    assert len(groups['SEG'])==7 and len(groups['EST'])==17 and len(groups['QVE'])==14 and len(groups['MAN'])==22
+    # EST.10 was retired; MAN.23 now holds after-maintenance photos and the
+    # previous general observations moved to MAN.24 without renumbering EST.
+    assert len(groups['SEG'])==7 and len(groups['EST'])==17 and len(groups['QVE'])==14 and len(groups['MAN'])==24
     assert 'EST.10' not in {i['id'] for i in groups['EST']}
-    assert groups['MAN'][-1]['id'] == 'MAN.22'
+    assert groups['MAN'][-1]['id'] == 'MAN.24'
     assert [groups[key][-1]['kind'] for key in ('EST', 'QVE', 'MAN')] == ['notes'] * 3
     items={i['id']:i for s in sections for i in s['items']}
     for key in ['SEG.01','SITE.02','SITE.03','SITE.04','EST.06','EST.13','EST.16','QVE.01','QVE.04','FIN.01']:
@@ -29,7 +29,7 @@ def test_exact_groups_questions_and_photo_requirements():
     assert not any(i['photo_required'] for i in groups['SEG'][1:])
     assert items['EST.06']['label']=='Verifique o ID da estação'
     assert items['QVE.03']['label']=='Botoneira de emergência - Verifique a dupla sinalização'
-    assert items['MAN.13']['label']=='Proteção diferencial QVE e Carregador - Teste manual do dispositivo'
+    assert items['MAN.15']['label']=='Proteção diferencial QVE e Carregador - Teste manual do dispositivo'
     assert items['MAN.01']['label'].startswith('Atualize o software')
     assert items['FIN.01']['label']=='Fotografia da Estação de Carregamento após intervenção'
     assert items['FIN.02']['supports_signature']
@@ -79,7 +79,7 @@ def test_signature_requires_its_own_png_at_close_and_survives_exports(setup):
     p=c.put(f'/api/reports/{rid}/photos/{pid}',headers=h,data={'checkpoint':'FIN.02','base_revision':str(body['base_revision'])},files={'file':('signature.png',png,'image/png')})
     assert p.status_code==200,p.text
     from test_rules_056 import photo
-    photo(c,h,rid,'MAN.12')
+    photo(c,h,rid,'MAN.13')
     body['payload']['qve_copy']={'source_report_id':str(uuid.uuid4()),'source_charger_id':str(uuid.uuid4()),'source_station_id':'ORIGEM-QVE-001','copied_by':'Técnico de teste','copied_at':'2026-11-13T10:00:00Z'}
     closed=c.put('/api/reports/'+rid,headers=h,json=body)
     assert closed.status_code==200,closed.text

@@ -135,7 +135,7 @@ station from its record. A direct import updates the catalogue independently of 
 The desktop accepts the Stations template or a first-row header with ID or Identificador. The editor
 checks the station revision before saving and records the administrator action in the audit log.
 The PCVE ID is permanent. The importer discards the site-name field and retains the postal address
-and coordinates. In **Gestão → Contratos → Gerir IDs do contrato**, **Adicionar ou atualizar por Excel** creates or updates the central PCVE and links it to the selected contract. Every linked contract reads that same record. Desktop administrators can also choose **Editar**. **Retirar** preserves the central PCVE and report history. Import the same ID to restore the association.
+and coordinates. In **Gestão → Contratos → Gerir IDs do contrato**, **Adicionar ou atualizar por Excel** creates or updates the central PCVE and links it to the selected contract. Every linked contract reads that same record. Desktop administrators can also choose **Editar**. **Retirar** keeps the central PCVE in the catalogue. The selected contract’s ID and its reports can be recovered for 14 days.
 Open **Relatórios associados** on the PCVE to browse reports in contracts available to your account.
 
 Closing a report can confirm manufacturer, model and serial via EST.02–EST.04. Concurrent
@@ -147,7 +147,15 @@ Ownership transfer records history and checks revision/access. Removing a contra
 not silently grant another technician ownership. Protect pending work on devices before making
 administrative changes that remove their access.
 
-Contract trash retains dependent records for **30 days** unless restored or explicitly purged. A
+| Administrator action | Recovery on the server |
+| --- | --- |
+| Delete a pending corrective or commissioning request | Select **Apagar pedido** on its detail screen and type **APAGAR**. Within **48 hours**, open **Recuperar pedidos apagados** in the same list and choose **Recuperar pedido**. The request, its synchronized draft and evidence return together. A closed report protects the request from this operation. |
+| Remove an ID from a preventive contract | Within **14 days**, choose **Gerir IDs do contrato → Recuperar IDs retirados → Recuperar** or import the same ID into that contract again. After expiry, adding the ID allows new work but does not recover expired reports. The central PCVE and other contracts remain available. |
+| Remove an ID from a corrective contract | Under **Contratos de corretivas**, open **Gerir IDs** for the contract. **Retirar** removes its coverage and the associated interventions and reports. **Recuperar** restores them for **14 days**. A request deleted separately keeps its own 48-hour deadline. Recover coverage first and then recover that request separately before its deadline. |
+
+Recovery ends at the displayed deadline even if the background purge has not yet run. Pre-upgrade detached IDs without a recorded expiry keep their historical handling.
+
+Trashing a whole preventive contract retains dependent records for **30 days** unless restored or explicitly purged. A
 lifespan sweep checks expiry approximately every minute. Purging is irreversible and differs from
 hiding/trashing. Report deletion is permanent and records a tombstone. If evidence changed after
 the draft was opened, refresh the report and review the new attachments before trying deletion again.

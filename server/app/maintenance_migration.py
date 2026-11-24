@@ -26,11 +26,11 @@ AFTER_LABEL = (
 CURRENT_HELP = "1 A = 1000 mA · 0,03 A = 30 mA"
 
 
-def upgrade_checkpoint(key):
+def v7_checkpoint(key):
     return {"MAN.21": "MAN.22", "EST.10": "EST.18"}.get(key, key)
 
 
-def upgrade_template(template):
+def upgrade_v6_template(template):
     if template.get("version") != 6:
         return template
     result = deepcopy(template)
@@ -68,6 +68,62 @@ def upgrade_template(template):
                 "na_notes_required": True,
             }
             section["items"].insert(len(section["items"]) - 1, after_work_photo)
+    return result
+
+
+
+def trip_time_checkpoint(key):
+    """Map a v7 checkpoint to its v8 meaning, including evidence references."""
+    if key == "MAN.12":
+        return "MAN.13"
+    if re.fullmatch(r"MAN\.(1[3-9]|2[0-2])", key):
+        return f"MAN.{int(key[4:]) + 2}"
+    return key
+
+
+def upgrade_checkpoint(key, version=6):
+    if version == 6:
+        key = v7_checkpoint(key)
+    return trip_time_checkpoint(key) if version in (6, 7) else key
+
+
+def upgrade_template(template):
+    result = upgrade_v6_template(template)
+    if result.get("version") != 7:
+        return result
+    from .checklist import TEMPLATE
+    current = {item["id"]: item for group in TEMPLATE["sections"] if group["id"] == "MAN"
+               for item in group["items"]}
+    result = deepcopy(result)
+    for section in result["sections"]:
+        if section["id"] != "MAN":
+            continue
+        items = []
+        for item in section["items"]:
+            old = item["id"]
+            item["id"] = trip_time_checkpoint(old)
+            if item["id"] != old:
+                item["measurement_key"] = old
+            if old == "MAN.12":
+                item["nok_notes_default"] = current["MAN.13"]["nok_notes_default"]
+            items.append(item)
+            if old in ("MAN.11", "MAN.12"):
+                items.append(deepcopy(current["MAN.12" if old == "MAN.11" else "MAN.14"]))
+        section["items"] = items
+    result["version"] = 8
+    return result
+
+
+def trip_time_payload(payload):
+    result = deepcopy(payload)
+    for field in ("answers", "signatures"):
+        if isinstance(result.get(field), dict):
+            result[field] = {trip_time_checkpoint(key): value for key, value in result[field].items()}
+    trip = result.get("answers", {}).get("MAN.13")
+    if isinstance(trip, dict) and trip.get("assessment") == "NOK":
+        from .maintenance_rules import TRIP_NOTE, untouched
+        if untouched(trip) and trip["suggested_notes"] == TRIP_NOTE:
+            trip["notes"] = trip["suggested_notes"] = "Proteção diferencial não dispara"
     return result
 
 
@@ -157,17 +213,17 @@ def persist_upgrade(db, report, current_template=None, *, correction=False):
                 )
             report.template, report.payload = schema, payload
         return
-    if report.status != "draft" or report.template.get("version") != 6 or report.template.get("frozen_upload"):
+    if report.status != "draft" or report.template.get("version") not in (6, 7) or report.template.get("frozen_upload"):
         return
     from sqlalchemy import update
     from .models import Photo
     from .checklist import corrected_draft_payload, corrected_draft_template
     original = report.template
     report.payload = corrected_draft_payload(report.payload, original, report.status)
-    for old_checkpoint, new_checkpoint in (("MAN.21", "MAN.22"), ("EST.10", "EST.18")):
-        db.execute(
-            update(Photo)
-            .where(Photo.report_id == report.id, Photo.checkpoint == old_checkpoint)
-            .values(checkpoint=new_checkpoint)
-        )
+    # One CASE expression maps each row from its original checkpoint exactly once.
+    from sqlalchemy import case
+    keys = ["EST.10", *(f"MAN.{number}" for number in range(12, 23))]
+    mapping = {key: upgrade_checkpoint(key, original["version"]) for key in keys}
+    db.execute(update(Photo).where(Photo.report_id == report.id, Photo.checkpoint.in_(mapping))
+               .values(checkpoint=case(mapping, value=Photo.checkpoint, else_=Photo.checkpoint)))
     report.template = corrected_draft_template(original, report.status)

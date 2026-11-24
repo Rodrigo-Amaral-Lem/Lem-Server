@@ -242,10 +242,10 @@ def test_detach_preserves_reports_and_reimport_reuses_membership(setup):
         assert client.delete(detach, headers=admin).status_code == 200
     assert client.get(f"/api/contracts/{cid}/chargers", headers=admin).json() == []
     assert len(client.get(f"/api/contracts/{other}/chargers", headers=admin).json()) == 1
-    assert {r["id"] for r in client.get(history, headers=admin).json()} == {rid, other_report}
+    assert {r["id"] for r in client.get(history, headers=admin).json()} == {other_report}
     assert {r["id"] for r in client.get(history, headers=tech).json()} == {other_report}
-    assert client.get(f"/api/reports/{rid}", headers=admin).json()["snapshot"] == original["snapshot"]
-    assert client.put(f"/api/reports/{rid}", headers=admin, json=body).status_code == 200
+    assert client.get(f"/api/reports/{rid}", headers=admin).status_code == 409
+    assert client.put(f"/api/reports/{rid}", headers=admin, json=body).status_code == 409
     new_body = {"checklist_version": TEMPLATE["version"], "charger_id": links[0]["id"],
                 "base_revision": 0, "payload": {}}
     assert client.put(f"/api/reports/{uuid4()}", headers=admin, json=new_body).status_code == 409
@@ -253,6 +253,7 @@ def test_detach_preserves_reports_and_reimport_reuses_membership(setup):
     restored, = client.get(f"/api/contracts/{cid}/chargers", headers=admin).json()
     assert restored["id"] == links[0]["id"] and restored["station_id"] == sid
     assert restored["reports"][0]["id"] == rid
+    assert client.get(f"/api/reports/{rid}", headers=admin).json()["snapshot"] == original["snapshot"]
 
 
 def test_import_and_upgrade_clean_live_fields_and_preserve_snapshots(setup):

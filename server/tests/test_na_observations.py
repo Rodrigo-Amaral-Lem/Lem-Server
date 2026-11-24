@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import pytest
 from copy import deepcopy
-from app.main import TEMPLATE
+from app.main import TEMPLATE, FROZEN_TEMPLATES
 from app.checklist import corrected_draft_template
 from test_workflow import setup
 from test_rules_056 import report
 
-KEYS='SITE.02 SITE.03 SITE.04 QVE.02 QVE.04 QVE.09 QVE.10 QVE.11 QVE.12 EST.01 EST.16 EST.17 MAN.12 MAN.13 MAN.18 MAN.20'.split()
+KEYS='SITE.02 SITE.03 SITE.04 QVE.02 QVE.04 QVE.09 QVE.10 QVE.11 QVE.12 EST.01 EST.16 EST.17 MAN.13 MAN.14 MAN.15 MAN.20 MAN.22'.split()
 
 @pytest.mark.parametrize('key',KEYS)
 def test_na_requires_submitted_reason(setup,key):
@@ -19,7 +19,7 @@ def test_na_requires_submitted_reason(setup,key):
     assert response.status_code==200,response.text
 
 def test_draft_upgrade_and_closed_history():
-    old=deepcopy(TEMPLATE)
+    old=deepcopy(FROZEN_TEMPLATES[7])
     for section in old['sections']:
         if section['id']=='SITE': section['title']='SITE - Site'
         section['items']=[i for i in section['items'] if i['id']!='CARG.07']
@@ -49,9 +49,9 @@ def test_connector_suggestions_and_measurement_labels():
     connectors=[i for key,i in items.items() if key.startswith('CARG.01.')]
     assert len(connectors)==3
     assert all(i['na_notes_default']=='Veículo usado não compatível' for i in connectors)
-    for key in ['MAN.11','MAN.12']:
+    for key in ['MAN.11','MAN.13']:
         assert 'intensidade' in items[key]['label'] and 'corrente' not in items[key]['label']
-    old=deepcopy(expanded)
+    old=for_charger(FROZEN_TEMPLATES[7], {'connectors':'CCS2, CCS2, T2'})
     for section in old['sections']:
         for item in section['items']:
             if item['id'].startswith('CARG.01.'): item.pop('na_notes_default',None)

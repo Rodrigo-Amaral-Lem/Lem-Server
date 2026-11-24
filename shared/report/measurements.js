@@ -6,9 +6,10 @@ var Measurements = (function() {
 
 function canonical(id) { return /^MAN\.\d{2}$/.test(id) ? "PC02." + ("0" + (Number(id.slice(4)) + 1)).slice(-2) : id; }
 function milliamp(id) { return id === "MAN.11" || id === "MAN.12"; }
-function decimals(id) { return milliamp(id) ? "" : "(?:[.,][0-9]{1,2})?"; }
-function digits(id) { if (milliamp(id)) return 6; id = canonical(id); return id === "PC02.19" ? 5 : /^PC02\.(0[5-9]|10|11)$/.test(id) ? 3 : 0; }
-function unit(id) { return milliamp(id) ? "mA" : digits(id) === 5 ? "Ω" : digits(id) ? "V" : ""; }
+function integerReading(id) { return milliamp(id) || id === "ms"; }
+function decimals(id) { return integerReading(id) ? "" : "(?:[.,][0-9]{1,2})?"; }
+function digits(id) { if (integerReading(id)) return 6; id = canonical(id); return id === "PC02.19" ? 5 : /^PC02\.(0[5-9]|10|11)$/.test(id) ? 3 : 0; }
+function unit(id) { if (id === "ms") return "ms"; return milliamp(id) ? "mA" : digits(id) === 5 ? "Ω" : digits(id) ? "V" : ""; }
 function notApplicable(value) {
     const text = String(value || "").trim().replace(/\s+/g, " ").toUpperCase().replace(/Ã/g, "A").replace(/Á/g, "A");
     return text === "NA" || text === "N/A" || text === "NAO APLICAVEL";

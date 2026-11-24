@@ -66,11 +66,11 @@ def test_legacy_current_units_are_converted_only_when_unambiguous(raw, expected)
 def test_template_migration_is_idempotent_and_closed_history_frozen():
     old = deepcopy(LEGACY_TEMPLATE)
     new = corrected_draft_template(old, "draft")
-    assert new["version"] == 7
+    assert new["version"] == 8
     items = {i["id"]: i for s in new["sections"] for i in s["items"]}
     assert "EST.10" not in items
-    assert items["MAN.21"]["photo_required"] and items["MAN.21"]["kind"] == "status"
-    assert items["MAN.22"]["kind"] == "notes"
+    assert items["MAN.23"]["photo_required"] and items["MAN.23"]["kind"] == "status"
+    assert items["MAN.24"]["kind"] == "notes"
     assert items["EST.15"]["na_notes_default"] == "Sem TPM"
     assert "(TPM)" in items["EST.15"]["label"]
     assert corrected_draft_template(new, "draft") == new
@@ -110,23 +110,23 @@ def test_existing_draft_upgrade_preserves_bytes_and_rejects_stale_writer(setup):
     c,h,contract,app,rid,pids,png = legacy_fixture(setup)
     path = '/api/reports/'+rid
     projected = c.get(path, headers=h).json()
-    assert projected["template"]["version"] == 7
+    assert projected["template"]["version"] == 8
     a = projected["payload"]["answers"]
-    assert a["MAN.22"]["notes"] == "Notas antigas da manutenção"
+    assert a["MAN.24"]["notes"] == "Notas antigas da manutenção"
     assert a["EST.18"]["notes"].endswith("Limpeza antiga")
-    assert "MAN.21" not in a and "EST.10" not in a
+    assert "MAN.23" not in a and "EST.10" not in a
     assert projected["payload"]["retired_answers"]["EST.10"]["value"] == "NOK"
-    assert {p['id']:p['checkpoint'] for p in projected['photos']}[pids[0]] == 'MAN.22'
+    assert {p['id']:p['checkpoint'] for p in projected['photos']}[pids[0]] == 'MAN.24'
     for pid in pids:
         assert c.get(path+'/photos/'+pid,headers=h).content == png
-    data = {'charger_id':projected['charger_id'],'checklist_version':7,'base_revision':projected['revision'],
+    data = {'charger_id':projected['charger_id'],'checklist_version':TEMPLATE["version"],'base_revision':projected['revision'],
             'status':'draft','payload':projected['payload']}
     saved = c.put(path,headers=h,json=data)
     assert saved.status_code == 200,saved.text
     assert c.put(path,headers=h,json=data).status_code == 409
     with app.state.factory() as db:
-        assert db.get(Report,rid).template['version'] == 7
-        assert [db.get(Photo,pid).checkpoint for pid in pids] == ['MAN.22','EST.18']
+        assert db.get(Report,rid).template['version'] == 8
+        assert [db.get(Photo,pid).checkpoint for pid in pids] == ['MAN.24','EST.18']
         assert all(db.get(Photo,pid).data == png for pid in pids)
 
 
@@ -136,22 +136,23 @@ def test_closed_legacy_correction_upgrades_and_requires_after_photograph(setup):
     original=c.get('/api/reports/'+rid,headers=h).json()
     assert original['template']['version']==6
     draft=start((c,h,contract,app,original))
-    assert draft['template']['version']==7
-    assert draft['payload']['answers']['MAN.22']['notes']=='Notas antigas da manutenção'
+    assert draft['template']['version']==8
+    assert draft['payload']['answers']['MAN.24']['notes']=='Notas antigas da manutenção'
     assert c.get('/api/reports/'+rid,headers=h).json()==original
     data=body(draft)
-    data['payload']['answers']['MAN.21']={'value':'OK','notes':''}
+    data['payload']['answers'].update({'MAN.12': {'value': '120 ms'}, 'MAN.14': {'value': 'NA', 'notes': 'Em carga'}})
+    data['payload']['answers']['MAN.23']={'value':'OK','notes':''}
     path='/api/reports/'+draft['id']
     result=c.post(path+'/correction/commit',headers=h,json=data)
-    assert result.status_code==422 and 'MAN.21: falta fotografia' in result.text
+    assert result.status_code==422 and 'MAN.23: falta fotografia' in result.text
     assert c.get('/api/reports/'+rid,headers=h).json()==original
     result=c.put(path+'/photos/'+str(uuid.uuid4()),headers=h,
-                 data={'checkpoint':'MAN.21','base_revision':str(draft['revision'])},
+                 data={'checkpoint':'MAN.23','base_revision':str(draft['revision'])},
                  files={'file':('after.png',png,'image/png')})
     assert result.status_code==200,result.text
     result=c.post(path+'/correction/commit',headers=h,json=data)
     assert result.status_code==200,result.text
-    assert result.json()['template']['version']==7 and result.json()['status']=='closed'
+    assert result.json()['template']['version']==8 and result.json()['status']=='closed'
     assert c.get('/api/reports/'+rid,headers=h).status_code==410
     assert c.post(path+'/correction/commit',headers=h,json=data).status_code==200
 
@@ -160,18 +161,18 @@ def test_photo_upload_uses_the_current_form_already_returned_by_get(setup):
     c, h, _, app, rid, pids, png = legacy_fixture(setup)
     path = '/api/reports/' + rid
     projected = c.get(path, headers=h).json()
-    assert projected['template']['version'] == 7
+    assert projected['template']['version'] == 8
     pid = str(uuid.uuid4())
     # A section can upload media before its next answers PUT. The API must accept
-    # the MAN.22 checkpoint it already exposed, migrating existing evidence too.
+    # the MAN.24 checkpoint it already exposed, migrating existing evidence too.
     result = c.put(path + '/photos/' + pid, headers=h,
-                   data={'checkpoint': 'MAN.22', 'base_revision': str(projected['revision'])},
+                   data={'checkpoint': 'MAN.24', 'base_revision': str(projected['revision'])},
                    files={'file': ('notes.png', png, 'image/png')})
     assert result.status_code == 200, result.text
     with app.state.factory() as db:
-        assert db.get(Report, rid).template['version'] == 7
-        assert db.get(Photo, pids[0]).checkpoint == 'MAN.22'
-        assert db.get(Photo, pid).checkpoint == 'MAN.22'
+        assert db.get(Report, rid).template['version'] == 8
+        assert db.get(Photo, pids[0]).checkpoint == 'MAN.24'
+        assert db.get(Photo, pid).checkpoint == 'MAN.24'
         assert db.get(Photo, pids[0]).data == png
 
 
@@ -222,16 +223,16 @@ def test_server_recalculates_forged_ok_and_requires_notes_before_closure(setup):
     payload=report['payload']
     a=payload['answers']
     a['MAN.11']={'value':'300','notes':''}
-    a['MAN.12']={'value':'315','assessment':'OK','notes':''}
-    a['MAN.18']={'value':'167','assessment':'OK','notes':''}
-    data={'charger_id':report['charger_id'],'checklist_version':7,'base_revision':1,'status':'draft','payload':payload}
+    a['MAN.13']={'value':'315','assessment':'OK','notes':''}
+    a['MAN.20']={'value':'167','assessment':'OK','notes':''}
+    data={'charger_id':report['charger_id'],'checklist_version':TEMPLATE["version"],'base_revision':1,'status':'draft','payload':payload}
     saved=c.put(path,headers=h,json=data)
     assert saved.status_code==200,saved.text
-    assert saved.json()['payload']['answers']['MAN.12']['assessment']=='NOK'
-    assert saved.json()['payload']['answers']['MAN.18']['assessment']=='NOK'
-    assert saved.json()['payload']['answers']['MAN.12']['notes']==''
+    assert saved.json()['payload']['answers']['MAN.13']['assessment']=='NOK'
+    assert saved.json()['payload']['answers']['MAN.20']['assessment']=='NOK'
+    assert saved.json()['payload']['answers']['MAN.13']['notes']==''
     image=BytesIO();Image.new('RGB',(20,30),'blue').save(image,format='PNG')
-    for key in ('MAN.12','MAN.18'):
+    for key in ('MAN.13','MAN.20'):
         result=c.put(path+'/photos/'+str(uuid.uuid4()),headers=h,
             data={'checkpoint':key,'base_revision':'2'},files={'file':('reading.png',image.getvalue(),'image/png')})
         assert result.status_code==200,result.text
@@ -240,16 +241,16 @@ def test_server_recalculates_forged_ok_and_requires_notes_before_closure(setup):
     rejected=c.put(path,headers=h,json=data)
     assert rejected.status_code==422 and 'NOK precisa de' in rejected.text
     assert c.get(path,headers=h).json()['status']=='draft'
-    a['MAN.12']['notes']='Confirmado pelo técnico'
-    a['MAN.18']['notes']='Confirmado pelo técnico'
+    a['MAN.13']['notes']='Confirmado pelo técnico'
+    a['MAN.20']['notes']='Confirmado pelo técnico'
     a['MAN.11']['value']='0'
     rejected=c.put(path,headers=h,json=data)
     assert rejected.status_code==422 and 'superior a zero' in rejected.text
     a['MAN.11']['value']='300'
     closed=c.put(path,headers=h,json=data)
     assert closed.status_code==200,closed.text
-    assert closed.json()['payload']['answers']['MAN.12']['assessment']=='NOK'
-    assert closed.json()['payload']['answers']['MAN.18']['assessment']=='NOK'
+    assert closed.json()['payload']['answers']['MAN.13']['assessment']=='NOK'
+    assert closed.json()['payload']['answers']['MAN.20']['assessment']=='NOK'
 
 
 def test_legacy_optional_null_does_not_drop_retired_notes():
@@ -282,7 +283,7 @@ def test_ancient_closed_correction_preserves_content_and_enforces_current_form(s
         db.commit()
     original = c.get("/api/reports/" + rid, headers=h).json()
     draft = start((c, h, contract, app, original))
-    assert draft["template"]["version"] == 7
+    assert draft["template"]["version"] == 8
     previous = draft["template"]["sections"][-1]
     assert previous["id"] == "ANT"
     key = next(i["id"] for i in previous["items"]
@@ -293,7 +294,7 @@ def test_ancient_closed_correction_preserves_content_and_enforces_current_form(s
     assert "signatures" not in draft["payload"]
     assert draft["photos"][0]["checkpoint"].startswith("ANT.")
     assert draft["payload"]["legacy_signatures"]["FIN.02"]["photo_id"] == draft["photos"][0]["id"]
-    data = {"charger_id": draft["charger_id"], "checklist_version": 7,
+    data = {"charger_id": draft["charger_id"], "checklist_version": TEMPLATE["version"],
             "base_revision": draft["revision"], "status": "closed",
             "payload": deepcopy(draft["payload"])}
     data["payload"].update(started="2026-11-01T09:00:00Z", finished="2026-11-01T10:00:00Z")
@@ -311,7 +312,7 @@ def test_ancient_closed_correction_preserves_content_and_enforces_current_form(s
     assert c.get("/api/reports/" + rid, headers=h).json() == original
     saved = c.post(path + "/correction/commit", headers=h, json=data)
     assert saved.status_code == 200, saved.text
-    assert saved.json()["template"]["version"] == 7
+    assert saved.json()["template"]["version"] == 8
     assert saved.json()["payload"]["answers"][key]["notes"] == "S" * 8000
     assert c.get("/api/reports/" + rid, headers=h).status_code == 410
     # The cloned historical signature bytes survive successful replacement.
@@ -332,9 +333,9 @@ def test_already_open_ancient_correction_get_matches_transactional_write(setup):
         db.commit()
     path = "/api/reports/" + draft["id"]
     projected = c.get(path, headers=h).json()
-    assert projected["template"]["version"] == 7
+    assert projected["template"]["version"] == 8
     saved = c.put(path, headers=h, json={"charger_id": draft["charger_id"],
-        "checklist_version": 7, "base_revision": draft["revision"],
+        "checklist_version": TEMPLATE["version"], "base_revision": draft["revision"],
         "status": "draft", "payload": projected["payload"]})
     assert saved.status_code == 200, saved.text
     assert saved.json()["payload"] == projected["payload"]

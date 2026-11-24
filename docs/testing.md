@@ -159,7 +159,7 @@ Without that variable, ordinary API tests use disposable SQLite databases.
 empty/null text. Corrected old EST.18 cases inspect the photograph decoded from the PDF and retain
 photo/video bytes through two corrections, including historical-signature references.
 
-`test_maintenance_evidence.py` tests MAN.14–18 with OK/NOK readings, missing/present photographs,
+`test_maintenance_evidence.py` tests the current MAN.16–20 with OK/NOK readings, missing/present photographs,
 N/A observations, old v6 draft upgrades and closed-history preservation. Real FFmpeg-generated
 videos are accepted as attachments but explicitly fail the mandatory-photograph check.
 
@@ -169,6 +169,10 @@ all old sessions. Concurrent resets must leave one complete password and no old 
 administrators trying to reset each other must both be rejected without deadlock.
 `test_postgres_password_reset.py` repeats the role/session/concurrency cases using the disposable
 loopback-only PostgreSQL fixture and `LEM_TEST_POSTGRES_URL` described above.
+
+## Checklist v8 and recovery deadlines
+
+Run `server/tests/test_trip_time_and_recovery.py` for v7 corrections, the two new millisecond readings, PDF and ZIP contents, and retention. Cases include the exact 48-hour and 14-day limits, preventive reimport, a separately deleted job whose corrective coverage is removed, and simultaneous closure/deletion. The recovery and race cases accept the isolated PostgreSQL fixture as well as SQLite. Run `test_form_evolution.py` with the App migration projection for cross-component parity.
 
 ## Checklist v7 regressions
 

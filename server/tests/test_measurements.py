@@ -32,11 +32,11 @@ def draft(setup):
     result = c.put(path, headers=h, json=body)
     assert result.status_code == 200, result.text
     from test_rules_056 import photo
-    photo(c, h, path.rsplit('/', 1)[1], 'MAN.12')
+    photo(c, h, path.rsplit('/', 1)[1], 'MAN.13')
     add_signature(c, h, path.rsplit('/', 1)[1], body["payload"])
     return c, h, path, {**body, "base_revision": 1, "status": "closed"}
 
-@pytest.mark.parametrize("key,value", [("MAN.04","1000"),("MAN.07","230,123"),("MAN.18","100000"),("MAN.10","49,")])
+@pytest.mark.parametrize("key,value", [("MAN.04","1000"),("MAN.07","230,123"),("MAN.20","100000"),("MAN.10","49,")])
 def test_invalid_measurements_block_closure_without_changing_report(setup, key, value):
     c,h,path,body = draft(setup)
     body["payload"]["answers"][key]["value"] = value
@@ -44,7 +44,7 @@ def test_invalid_measurements_block_closure_without_changing_report(setup, key, 
     saved = c.get(path,headers=h).json()
     assert saved["status"] == "draft" and saved["revision"] == 1
 
-@pytest.mark.parametrize("key,value,formatted,nok", [("MAN.07","238.3","238,3 V",False),("MAN.04","359,99","359,99 V",True),("MAN.10","50","50 V",True),("MAN.18","4564,4","4564,4 Ω",False)])
+@pytest.mark.parametrize("key,value,formatted,nok", [("MAN.07","238.3","238,3 V",False),("MAN.04","359,99","359,99 V",True),("MAN.10","50","50 V",True),("MAN.20","4564,4","4564,4 Ω",False)])
 def test_complete_measurements_export_with_units_and_nok(setup,key,value,formatted,nok):
     c,h,path,body = draft(setup)
     image = BytesIO(); Image.new("RGB",(8,8),"cyan").save(image,format="PNG")
@@ -76,7 +76,7 @@ def test_not_applicable_exempts_measurement_evidence_and_drafts_keep_partial_typ
     assert result.status_code==200,result.text
     assert result.json()["payload"]["answers"]["MAN.07"]["value"]=="238,"
     body["base_revision"]=2
-    for key in [f"MAN.{i:02d}" for i in range(4,11)]+["MAN.18"]:
+    for key in [f"MAN.{i:02d}" for i in range(4,11)]+["MAN.20"]:
         body["payload"]["answers"][key]["value"]="Não Aplicavel"
     result=c.put(path,headers=h,json=body)
     assert result.status_code==200,result.text

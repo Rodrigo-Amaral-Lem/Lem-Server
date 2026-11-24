@@ -1,6 +1,6 @@
 {
   "id": "pcve-maintenance",
-  "version": 7,
+  "version": 8,
   "title": "Manutenção preventiva de PCVE",
   "sections": [
     {
@@ -408,6 +408,17 @@
         },
         {
           "id": "MAN.12",
+          "label": "Proteção diferencial QVE e Carregador - Indicar o tempo de disparo configurado",
+          "kind": "text",
+          "photo_required": false,
+          "measurement_unit": "ms",
+          "measurement_digits": 6,
+          "measurement_decimals": 0,
+          "help": "1s = 1000ms",
+          "measurement_key": "ms"
+        },
+        {
+          "id": "MAN.13",
           "label": "Proteção diferencial QVE e Carregador - Indique o valor da intensidade de disparo com testador",
           "kind": "text",
           "photo_required": true,
@@ -419,93 +430,123 @@
           "measurement_unit": "mA",
           "measurement_digits": 6,
           "measurement_decimals": 0,
-          "help": "1 A = 1000 mA · 0,03 A = 30 mA"
+          "help": "1 A = 1000 mA · 0,03 A = 30 mA",
+          "measurement_key": "MAN.12",
+          "nok_notes_default": "Proteção diferencial não dispara"
         },
         {
-          "id": "MAN.13",
+          "id": "MAN.14",
+          "label": "Proteção diferencial QVE e Carregador - Indicar o tempo de disparo com testador",
+          "kind": "text",
+          "photo_required": true,
+          "allow_status": true,
+          "reading_required": true,
+          "photo_always": false,
+          "na_notes_required": true,
+          "na_notes_default": "Não testado devido a veículo em carga",
+          "measurement_unit": "ms",
+          "measurement_digits": 6,
+          "measurement_decimals": 0,
+          "help": "1s = 1000ms",
+          "measurement_key": "ms",
+          "nok_notes_default": "Proteção diferencial não dispara",
+          "assessment_required": true
+        },
+        {
+          "id": "MAN.15",
           "label": "Proteção diferencial QVE e Carregador - Teste manual do dispositivo",
           "kind": "status",
           "photo_required": false,
           "na_notes_required": true,
-          "na_notes_default": "Não testado devido a veículo em carga"
+          "na_notes_default": "Não testado devido a veículo em carga",
+          "measurement_key": "MAN.13"
         },
         {
-          "id": "MAN.14",
+          "id": "MAN.16",
           "label": "Teste de isolamento: Terra - L1 (>500 MΩ)",
           "kind": "text",
           "photo_required": true,
           "photo_always": false,
           "allow_status": true,
           "reading_required": true,
-          "na_notes_required": true
+          "na_notes_required": true,
+          "measurement_key": "MAN.14"
         },
         {
-          "id": "MAN.15",
+          "id": "MAN.17",
           "label": "Teste de isolamento: Terra - L2 (>500 MΩ)",
           "kind": "text",
           "photo_required": true,
           "photo_always": false,
           "allow_status": true,
           "reading_required": true,
-          "na_notes_required": true
+          "na_notes_required": true,
+          "measurement_key": "MAN.15"
         },
         {
-          "id": "MAN.16",
+          "id": "MAN.18",
           "label": "Teste de isolamento: Terra - L3 (>500 MΩ)",
           "kind": "text",
           "photo_required": true,
           "photo_always": false,
           "allow_status": true,
           "reading_required": true,
-          "na_notes_required": true
+          "na_notes_required": true,
+          "measurement_key": "MAN.16"
         },
         {
-          "id": "MAN.17",
+          "id": "MAN.19",
           "label": "Teste de isolamento: Terra - N (>500 MΩ)",
           "kind": "text",
           "photo_required": true,
           "photo_always": false,
           "allow_status": true,
           "reading_required": true,
-          "na_notes_required": true
+          "na_notes_required": true,
+          "measurement_key": "MAN.17"
         },
         {
-          "id": "MAN.18",
+          "id": "MAN.20",
           "label": "Valor da resistência da terra",
           "kind": "text",
           "photo_required": true,
           "photo_always": false,
           "allow_status": true,
           "reading_required": true,
-          "na_notes_required": true
+          "na_notes_required": true,
+          "measurement_key": "MAN.18"
         },
         {
-          "id": "MAN.19",
+          "id": "MAN.21",
           "label": "Verifique o estado dos filtros",
           "kind": "status",
-          "photo_required": false
+          "photo_required": false,
+          "measurement_key": "MAN.19"
         },
         {
-          "id": "MAN.20",
+          "id": "MAN.22",
           "label": "Verifique todos os apertos do carregador (fontes de alimentação, disjuntores diferenciais, disjuntores, contadores, placas de hardware, etc.)",
           "kind": "status",
           "photo_required": false,
           "na_notes_required": true,
-          "na_notes_default": "Apertos não verificados devido a veículo em carga"
+          "na_notes_default": "Apertos não verificados devido a veículo em carga",
+          "measurement_key": "MAN.20"
         },
         {
-          "id": "MAN.21",
+          "id": "MAN.23",
           "label": "Fotografias do interior e exterior do carregador e sua limpeza depois da tarefa executada (visualizar todos os componentes internos e externos)",
           "kind": "status",
           "photo_required": true,
-          "na_notes_required": true
+          "na_notes_required": true,
+          "measurement_key": "MAN.21"
         },
         {
-          "id": "MAN.22",
+          "id": "MAN.24",
           "label": "Observações gerais da manutenção",
           "kind": "notes",
           "photo_required": false,
-          "optional": true
+          "optional": true,
+          "measurement_key": "MAN.22"
         }
       ]
     },

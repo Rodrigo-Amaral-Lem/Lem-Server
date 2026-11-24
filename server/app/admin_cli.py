@@ -22,6 +22,7 @@ from sqlalchemy import select, delete, update, func
 from sqlalchemy.exc import IntegrityError
 from .stations import lock_catalogue, get_or_create_station
 from .models import DetachedCharger, attached_charger
+from .contract_trash import reattach_charger
 from .import_profiles import clean_station_details, is_contract_notes, obsolete_station_field
 from .models import (
     database,
@@ -459,6 +460,9 @@ def report_commands(db, args):
 
 
 def charger_commands(db, args):
+    # Match the API and the expiry sweep: catalogue first, then the contract.
+    if args.action != "list":
+        lock_catalogue(db)
     c = active_contract(db, args.contract, write=args.action != "list")
     if args.action == "list":
         return [
@@ -501,7 +505,6 @@ def charger_commands(db, args):
             if not isinstance(value, str):
                 value = field.partition("=")[2]
         details[key.strip()] = value
-    lock_catalogue(db)
     if args.action == "add":
         if (
             not args.external_id
@@ -509,14 +512,13 @@ def charger_commands(db, args):
             or len(args.external_id.strip()) > 200
         ):
             raise ValueError("Indique --external-id válido")
-        lock_catalogue(db)
         station = get_or_create_station(db, args.external_id.strip(), {})
         charger = db.scalar(select(Charger).where(Charger.contract_id == c.id, Charger.station_id == station.id))
         if charger is None:
             charger = Charger(id=str(uuid.uuid4()), contract_id=c.id, external_id=station.external_id, station=station)
             db.add(charger)
-        elif marker := db.get(DetachedCharger, charger.id):
-            db.delete(marker)
+        elif db.get(DetachedCharger, charger.id):
+            reattach_charger(db, charger.id)
         else:
             raise ValueError("O PCVE já pertence ao contrato")
     else:

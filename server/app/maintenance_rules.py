@@ -20,12 +20,12 @@ def clear_suggestion(answer):
     answer.pop("suggested_notes", None)
 
 
-def reading(answers, key, scale=1):
+def reading(answers, key, scale=1, measurement_key=None):
     answer = answers.get(key, {})
     if not isinstance(answer, dict) or "previous_value" in answer:
         return None
     try:
-        value = format_value(key, answer.get("value", ""))
+        value = format_value(measurement_key or key, answer.get("value", ""))
         if not_applicable(value) or value in ("OK", "NOK"):
             return None
         return int(Decimal(value.split()[0].replace(",", ".")) * scale)
@@ -33,37 +33,41 @@ def reading(answers, key, scale=1):
         return None
 
 
-def calculate(answers):
+def calculate(answers, version=7):
     configured_ma = reading(answers, "MAN.11")
     result = {}
     if configured_ma is None or configured_ma <= 0:
         return result
 
-    trip_ma = reading(answers, "MAN.12")
+    trip_key = "MAN.13" if version >= 8 else "MAN.12"
+    earth_key = "MAN.20" if version >= 8 else "MAN.18"
+    trip_ma = reading(answers, trip_key, measurement_key="MAN.12")
     if trip_ma is not None:
         # Both endpoints fail. Cross-multiplication keeps 50% and 105% exact.
         outside_trip_band = trip_ma * 100 >= configured_ma * 105 or trip_ma * 2 <= configured_ma
-        result["MAN.12"] = ("NOK", TRIP_NOTE) if outside_trip_band else ("OK", "")
+        failure_note = "Proteção diferencial não dispara" if version >= 8 else TRIP_NOTE
+        result[trip_key] = ("NOK", failure_note) if outside_trip_band else ("OK", "")
 
     hundredths_per_ohm = 100
-    earth_hundredths = reading(answers, "MAN.18", hundredths_per_ohm)
+    earth_hundredths = reading(answers, earth_key, hundredths_per_ohm, "MAN.18")
     if earth_hundredths is not None:
         # Scale the form's temporary 50 V limit to hundredths of an ohm × mA.
         # Common/docs/report-contract.md describes the 25 V outdoor exception.
         scaled_voltage_limit = 50 * hundredths_per_ohm * 1000
         if earth_hundredths * configured_ma > scaled_voltage_limit:
-            result["MAN.18"] = ("NOK", EARTH_FAIL_NOTE)
+            result[earth_key] = ("NOK", EARTH_FAIL_NOTE)
         elif earth_hundredths > 50 * hundredths_per_ohm:
-            result["MAN.18"] = ("OK", EARTH_HIGH_NOTE)
+            result[earth_key] = ("OK", EARTH_HIGH_NOTE)
         else:
-            result["MAN.18"] = ("OK", "")
+            result[earth_key] = ("OK", "")
     return result
 
 
-def apply_assessments(answers, offer_suggestions=False):
+def apply_assessments(answers, offer_suggestions=False, version=7):
     result = deepcopy(answers)
-    calculated = calculate(answers)
-    for key in ("MAN.12", "MAN.18"):
+    calculated = calculate(answers, version)
+    keys = ("MAN.13", "MAN.20") if version >= 8 else ("MAN.12", "MAN.18")
+    for key in keys:
         if not isinstance(result.get(key), dict):
             continue
         answer = result[key]

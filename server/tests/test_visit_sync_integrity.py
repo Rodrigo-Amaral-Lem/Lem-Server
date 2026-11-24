@@ -284,7 +284,7 @@ def test_office_and_field_save_in_catalogue_order(backend, monkeypatch, office, 
         assert client.get(f"/api/contracts/{cid}/chargers/{target}/notes", headers=tech).json()["contract_notes"] == "Portão Âmbar / Gate"
 
 
-def test_export_listing_includes_closed_detached_history(signed):
+def test_export_listing_recovers_closed_membership_history(signed):
     client, admin, _, path, body = signed
     closed = client.put(path, headers=admin, json={**body, "status": "closed"}).json()
     cid = closed["contract_id"]
@@ -293,6 +293,9 @@ def test_export_listing_includes_closed_detached_history(signed):
     client.put(f"/api/contracts/{cid}/users/{owner}", headers=admin).raise_for_status()
     client.delete(root + "/" + body["charger_id"], headers=admin).raise_for_status()
     assert all(row["id"] != body["charger_id"] for row in client.get(root, headers=admin).json())
+    for user in (admin, tech):
+        assert all(row["id"] != body["charger_id"] for row in client.get(root + "?include_detached=true", headers=user).json())
+    client.post(root + "/" + body["charger_id"] + "/restore", headers=admin).raise_for_status()
     for user in (admin, tech):
         history = client.get(root + "?include_detached=true", headers=user).json()
         assert any(row["id"] == body["charger_id"] and any(r["id"] == closed["id"] for r in row["reports"]) for row in history)
