@@ -88,11 +88,11 @@ def test_cache_failure_retries_and_active_readers_survive_eviction():
     a=cache.acquire('a',8,load); b=cache.acquire('a',8,load)
     assert len(calls)==1
     other=cache.acquire('b',8,lambda:b'new-data')
-    assert a.source.read()==b'original' and b.source.read()==b'original'
+    assert a.read()==b'original' and b.read()==b'original'
     a.close(); b.close()
-    assert 'a' not in cache.entries and other.source.read()==b'new-data'
+    assert 'a' not in cache.entries and other.read()==b'new-data'
     other.close()
     with pytest.raises(OSError): cache.acquire('bad',10,lambda:(_ for _ in ()).throw(OSError('disk/db failure')))
     assert not cache.loading
-    repaired=cache.acquire('bad',4,lambda:b'fine'); assert repaired.source.read()==b'fine'
+    repaired=cache.acquire('bad',4,lambda:b'fine'); assert repaired.read()==b'fine'
     repaired.close()

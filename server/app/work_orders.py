@@ -10,7 +10,8 @@ from sqlalchemy import case, delete, func, literal, select
 from sqlalchemy.orm import aliased, selectinload
 
 from .import_profiles import normalize_contract_notes
-from .models import (Charger, Contract, ContractTrash, CorrectiveContract, DeletedWorkOrder, ExpiredVisitDraft, Intervention, NoticeReceipt, Photo, Report, ReportCorrection, User, WorkAssignee,
+from .models import (Audit, Charger, Contract, ContractTrash, CorrectiveContract, DataMigration, DeletedIntervention,
+                     DeletedWorkOrder, ExpiredVisitDraft, Intervention, NoticeReceipt, Photo, Report, ReportCorrection, User, WorkAssignee,
                      WorkItem, WorkItemDraft, WorkNotice, WorkOrder, WorkOrderCancellation, RemovedCharger, attached_charger, now)
 from .stations import lock_catalogue
 from .work_order_retention import cancellation_cutoff
@@ -143,6 +144,45 @@ def accept_closure(db, charger, report_id, actor, timestamp):
         item.resolved_by, item.resolved_at = actor.id, timestamp
         order.revision += 1
         finish_if_ready(db, order, timestamp)
+
+
+def expire_intervention_items(db, target, actor_id, timestamp):
+    """Resolve planned visits in the same transaction that purges their request."""
+    items = list(db.scalars(select(WorkItem).where(
+        WorkItem.target == target, WorkItem.kind.in_(INTERVENTION_KINDS), WorkItem.state == "pending",
+        ~WorkItem.order_id.in_(select(WorkOrderCancellation.order_id)),
+    )))
+    for item in items:
+        order = db.get(WorkOrder, item.order_id)
+        local_day = datetime.fromisoformat(timestamp).astimezone(ZoneInfo("Europe/Lisbon")).date().isoformat()
+        item.resolved_before_start = not has_started(order, local_day)
+        item.state = "invalid"
+        item.note = "Pedido de intervenção eliminado definitivamente."
+        item.resolved_by, item.resolved_at = actor_id, timestamp
+        order.revision += 1
+        notice(db, order, order.followers, "invalid", f"{item.external_id}: {item.note}")
+        finish_if_ready(db, order, timestamp)
+
+
+def recover_purged_intervention_items(factory):
+    """Repair pending visits left behind by the old intervention purge."""
+    migration = "purged-intervention-work-items-v1"
+    with factory() as db:
+        if db.get(DataMigration, migration):
+            return
+    with factory.begin() as db:
+        lock_catalogue(db)
+        if db.get(DataMigration, migration):
+            return
+        targets = db.scalars(select(DeletedIntervention.id)
+                            .join(WorkItem, WorkItem.target == DeletedIntervention.id)
+                            .where(WorkItem.state == "pending", WorkItem.kind.in_(INTERVENTION_KINDS))
+                            .distinct())
+        for target in list(targets):
+            purge = db.scalar(select(Audit).where(Audit.target == target, Audit.action == "contract.purge")
+                              .order_by(Audit.created.desc()).limit(1))
+            expire_intervention_items(db, target, purge.user_id if purge else None, purge.created if purge else now())
+        db.add(DataMigration(name=migration))
 
 
 class Plan(BaseModel):

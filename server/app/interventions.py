@@ -7,7 +7,7 @@ from datetime import date
 from typing import Literal
 from uuid import UUID
 
-from fastapi import Depends, File, Form, HTTPException, UploadFile
+from fastapi import Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, func, select
 
@@ -15,8 +15,8 @@ from .import_profiles import normalize_contract_notes
 from .importer import cell_text, workbook
 from .models import (Assignment, Charger, Contract, ContractChargerNote, CorrectiveContract, CorrectiveCoverage,
                      Intervention, Report, Station, User, set_contract_notes, RemovedCoverage,
-                     ContractTrash, CoverageTrashLink, DeletedIntervention)
-from .contract_trash import MEMBERSHIP_RETENTION, utc_now
+                     ContractTrash, CoverageTrashLink, DeletedIntervention, MembershipRevision)
+from .contract_trash import MEMBERSHIP_RETENTION, advance_membership_revision, check_membership_revision, utc_now
 from .stations import lock_catalogue, stations_for_import
 from .work_orders import assigned_items, current_ordinary_drafts, lisbon_now
 
@@ -196,18 +196,24 @@ def register(app, db_dep, user_dep, admin, audit, visible_stations, file_bytes, 
     @app.get("/api/corrective-contracts/{cid}/members")
     def members(cid: UUID, u=Depends(admin), db=Depends(db_dep)):
         key = str(cid)
-        active = (select(Station.id, Station.external_id).join(CorrectiveCoverage)
+        active = (select(Station.id, Station.external_id, MembershipRevision.revision).join(CorrectiveCoverage)
+                  .outerjoin(MembershipRevision, (MembershipRevision.kind == "corrective")
+                             & (MembershipRevision.contract_id == key)
+                             & (MembershipRevision.member_id == Station.id))
                   .where(CorrectiveCoverage.contract_id == key))
         removed = (select(Station.id, Station.external_id, RemovedCoverage.purge_after).join(RemovedCoverage)
                    .where(RemovedCoverage.contract_id == key, RemovedCoverage.purge_after > utc_now().isoformat()))
-        rows = [dict(id=sid, external_id=name) for sid, name in db.execute(active)]
+        rows = [dict(id=sid, external_id=name, membership_revision=revision or 0)
+                for sid, name, revision in db.execute(active)]
         rows.extend(dict(id=sid, external_id=name, purge_after=end) for sid, name, end in db.execute(removed))
         return sorted(rows, key=lambda row: row["external_id"])
 
     @app.delete("/api/corrective-contracts/{cid}/members/{sid}")
-    def remove_member(cid: UUID, sid: UUID, u=Depends(admin), db=Depends(db_dep)):
+    def remove_member(cid: UUID, sid: UUID, membership_revision: int = Query(0, ge=0),
+                      u=Depends(admin), db=Depends(db_dep)):
         key, station = str(cid), str(sid)
         lock_catalogue(db)
+        check_membership_revision(db, "corrective", key, station, membership_revision)
         existing = db.get(RemovedCoverage, (key, station))
         if existing:
             return {"purge_after": existing.purge_after}
@@ -220,7 +226,7 @@ def register(app, db_dep, user_dep, admin, audit, visible_stations, file_bytes, 
         jobs = (select(Contract).join(Intervention, Intervention.id == Contract.id)
                 .join(Charger, Charger.id == Contract.id)
                 .where(Intervention.corrective_contract_id == key, Charger.station_id == station)
-                .order_by(Contract.id).with_for_update())
+                .order_by(Contract.id).with_for_update(of=Contract))
         for scope in db.scalars(jobs):
             if db.get(ContractTrash, scope.id):
                 continue
@@ -240,14 +246,24 @@ def register(app, db_dep, user_dep, admin, audit, visible_stations, file_bytes, 
         if db.get(CorrectiveCoverage, (key, station)):
             return {"restored": True}
         entry = db.get(RemovedCoverage, (key, station))
-        if entry is None or entry.purge_after <= utc_now().isoformat():
-            raise HTTPException(410, "O prazo de recuperação deste ID terminou.")
-        scopes = list(db.scalars(select(CoverageTrashLink.job_id).where(
-            CoverageTrashLink.contract_id == key, CoverageTrashLink.station_id == station)))
+        expired = HTTPException(410, "O prazo de recuperação deste ID terminou.")
+        if entry is None:
+            raise expired
+        links = select(CoverageTrashLink.job_id).where(
+            CoverageTrashLink.contract_id == key, CoverageTrashLink.station_id == station)
+        scopes = list(db.scalars(links.order_by(CoverageTrashLink.job_id)))
+        locked = list(db.scalars(select(Contract.id).where(Contract.id.in_(scopes))
+                                 .order_by(Contract.id).with_for_update()))
+        # A wait for a report write or a sweep can take us past the deadline.
+        if locked != scopes or entry.purge_after <= utc_now().isoformat():
+            raise expired
+        if set(db.scalars(links)) != set(scopes):
+            raise expired
         # Remove only the holds created by this membership operation.
         db.execute(delete(ContractTrash).where(ContractTrash.contract_id.in_(scopes)))
         db.add(CorrectiveCoverage(contract_id=key, station_id=station))
         db.delete(entry)
+        advance_membership_revision(db, "corrective", key, station)
         audit(db, u, "corrective-contract.restore-pcve", key + ":" + station)
         db.commit()
         return {"restored": True}

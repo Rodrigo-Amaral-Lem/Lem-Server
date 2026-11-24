@@ -11,9 +11,9 @@ import os
 import re
 from urllib.parse import urlparse
 
-VERSION = "0.11.1"
-# Checklist v8 changes checkpoint identities and adds required trip time fields.
-MINIMUM_CLIENT = "0.11.1"
+VERSION = "0.11.2"
+# Membership removals require the latest observed revision after a recovery.
+MINIMUM_CLIENT = "0.11.2"
 HEADER = "X-Lem-Client-Version"
 
 

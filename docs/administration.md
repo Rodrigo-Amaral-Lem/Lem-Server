@@ -153,6 +153,8 @@ administrative changes that remove their access.
 | Remove an ID from a preventive contract | Within **14 days**, choose **Gerir IDs do contrato → Recuperar IDs retirados → Recuperar** or import the same ID into that contract again. After expiry, adding the ID allows new work but does not recover expired reports. The central PCVE and other contracts remain available. |
 | Remove an ID from a corrective contract | Under **Contratos de corretivas**, open **Gerir IDs** for the contract. **Retirar** removes its coverage and the associated interventions and reports. **Recuperar** restores them for **14 days**. A request deleted separately keeps its own 48-hour deadline. Recover coverage first and then recover that request separately before its deadline. |
 
+Refresh the membership list before confirming a new removal after another administrator restores an ID. After an intervention's recovery period ends, its permanent deletion records an impediment on its pending work-order visit. An order with no pending visits is completed.
+
 Recovery ends at the displayed deadline even if the background purge has not yet run. Pre-upgrade detached IDs without a recorded expiry keep their historical handling.
 
 Trashing a whole preventive contract retains dependent records for **30 days** unless restored or explicitly purged. A

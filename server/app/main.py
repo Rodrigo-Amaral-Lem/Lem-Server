@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from tempfile import SpooledTemporaryFile, TemporaryDirectory
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Request, Header
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Request, Header, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
@@ -37,7 +37,7 @@ from .models import (
     Assignment,
     Charger,
     set_contract_notes,
-    DetachedCharger, RemovedCharger, CoverageTrashLink, RemovedCoverage,
+    DetachedCharger, RemovedCharger, CoverageTrashLink, RemovedCoverage, MembershipRevision,
     attached_charger,
     Station,
     Report,
@@ -65,7 +65,7 @@ from .maintenance_migration import upgrade_checkpoint, persist_upgrade
 from .exports import write_bundle, file_chunks, MissingEvidence
 from .report_naming import EVIDENCE_EXTENSIONS, content_disposition, evidence_stem, report_identifier
 from .contract_trash import (RETENTION, MEMBERSHIP_RETENTION, INTERVENTION_RETENTION, reattach_charger,
-                             utc_now, purge_expired, purge_memberships)
+                             check_membership_revision, utc_now, purge_expired, purge_memberships)
 from .work_order_retention import purge_cancelled_orders
 from . import corrections, interventions, work_orders
 
@@ -185,6 +185,7 @@ class DetachedMembership(Exception):
 
 def create_app(url=None, bootstrap=True):
     engine, Factory = database(url)
+    work_orders.recover_purged_intervention_items(Factory)
     if bootstrap:
         with Factory() as db:
             if not db.scalar(select(User).limit(1)):
@@ -227,6 +228,7 @@ def create_app(url=None, bootstrap=True):
         finally:
             stop.set()
             await task
+            evidence_cache.close()
 
     def compatible_client(
         request: Request, x_lem_client_version: str | None = Header(default=None)
@@ -272,7 +274,6 @@ def create_app(url=None, bootstrap=True):
     app.state.evidence_cache = evidence_cache
     app.state.purge_expired_contracts = lambda instant=None: purge_expired(Factory, instant)
     bearer = HTTPBearer()
-    app.add_middleware(RequestBodyLimit)
     limiter = LoginLimiter()
     password_change_limiter = LoginLimiter()
     # Use the same scrypt work for unknown users, avoiding the cheap early exit.
@@ -287,6 +288,7 @@ def create_app(url=None, bootstrap=True):
     export_slots = threading.BoundedSemaphore(resource_limit("LEM_EXPORT_CONCURRENCY", 2, 4))
     image_slots = threading.BoundedSemaphore(resource_limit("LEM_IMAGE_CONCURRENCY", 1, 2))
     download_slots = threading.BoundedSemaphore(resource_limit("LEM_DOWNLOAD_CONCURRENCY", 8, 16))
+    app.add_middleware(RequestBodyLimit, upload_slots=image_slots, client_policy=policy)
 
     def admission(slots, operation, retry_after=15):
         # Fail fast BEFORE authentication opens a DB transaction. Waiting while
@@ -304,9 +306,6 @@ def create_app(url=None, bootstrap=True):
 
     def export_admission():
         yield from admission(export_slots, "exportação")
-
-    def image_admission():
-        yield from admission(image_slots, "validação de fotografias")
 
     def download_admission():
         yield from admission(download_slots, "transferência de evidências", 2)
@@ -779,7 +778,10 @@ def create_app(url=None, bootstrap=True):
     def chargers(cid: str, include_detached: bool = False, u=Depends(user_dep), db=Depends(db_dep)):
         accessible(db, u, cid, scoped_listing=db.info.get("order_catalogue"))
         limited = u.role != "admin" and not db.get(Assignment, (u.id, cid))
-        members = select(Charger).where(Charger.contract_id == cid)
+        members = (select(Charger, MembershipRevision.revision).where(Charger.contract_id == cid)
+                   .outerjoin(MembershipRevision, (MembershipRevision.kind == "preventive")
+                              & (MembershipRevision.contract_id == cid)
+                              & (MembershipRevision.member_id == Charger.id)))
         if not include_detached:
             members = members.where(attached_charger())
         members = members.where(~Charger.id.in_(select(RemovedCharger.charger_id)))
@@ -845,11 +847,12 @@ def create_app(url=None, bootstrap=True):
                 "external_id": c.external_id,
                 "details": c.details,
                 **note_fields(c),
+                "membership_revision": membership_revision or 0,
                 "reports": summaries.get(c.id, []),
                 "deleted_reports": removed.get(c.id, []),
                 "report_replacements": {rid: replacements[rid] for rid in removed.get(c.id, []) if rid in replacements},
             }
-            for c in db.scalars(
+            for c, membership_revision in db.execute(
                 members.options(joinedload(Charger.station), joinedload(Charger.contract_note)).order_by(Charger.external_id)
             )
         ]
@@ -914,7 +917,8 @@ def create_app(url=None, bootstrap=True):
         return [station_record(station) for station in db.scalars(visible_stations(u))]
 
     @app.delete("/api/contracts/{cid}/chargers/{charger_id}")
-    def detach_charger(cid: str, charger_id: str, u=Depends(admin), db=Depends(db_dep)):
+    def detach_charger(cid: str, charger_id: str, membership_revision: int = Query(0, ge=0),
+                       u=Depends(admin), db=Depends(db_dep)):
         lock_catalogue(db)
         interventions.require_preventive_scope(db, cid)
         accessible(db, u, cid, write=True)
@@ -922,6 +926,7 @@ def create_app(url=None, bootstrap=True):
                             .with_for_update())
         if charger is None:
             raise HTTPException(404, "PCVE inexistente neste contrato")
+        check_membership_revision(db, "preventive", cid, charger_id, membership_revision)
         if not db.get(DetachedCharger, charger_id):
             db.add(DetachedCharger(charger_id=charger_id))
             db.add(RemovedCharger(charger_id=charger_id, purge_after=(utc_now() + MEMBERSHIP_RETENTION).isoformat()))
@@ -945,7 +950,7 @@ def create_app(url=None, bootstrap=True):
         if charger is None or charger.contract_id != cid or db.get(interventions.Intervention, cid):
             raise HTTPException(404, "ID inexistente neste contrato.")
         if db.get(DetachedCharger, charger_id):
-            if not db.get(RemovedCharger, charger_id) or not reattach_charger(db, charger_id, restore=True):
+            if not db.get(RemovedCharger, charger_id) or not reattach_charger(db, charger, restore=True):
                 raise HTTPException(410, "O prazo de recuperação deste ID terminou.")
             audit(db, u, "contract.restore-pcve", charger_id)
             db.commit()
@@ -1115,7 +1120,7 @@ def create_app(url=None, bootstrap=True):
             station = get_or_create_station(db, rec["external_id"], rec["details"], stations)
             c = existing.get(rec["external_id"])
             if c:
-                reattach_charger(db, c.id)
+                reattach_charger(db, c)
                 c.station = station
                 changed += 1
             else:
@@ -1160,8 +1165,14 @@ def create_app(url=None, bootstrap=True):
         return {"exists": True, **report_json(db, r)}
 
     @app.get("/api/reports/{rid}")
-    def get_report(rid: str, u=Depends(user_dep), db=Depends(db_dep)):
-        return report_json(db, report_access(db, u, rid))
+    def get_report(rid: str, include_stored_payload: bool = False, u=Depends(user_dep), db=Depends(db_dep)):
+        report = report_access(db, u, rid)
+        result = report_json(db, report)
+        if include_stored_payload and result["template"]["version"] != report.template.get("version"):
+            # A 0.11.1 client may have migrated its visible draft while retaining
+            # an older evidence receipt. Allow comparison with the stored form.
+            result["stored_payload"] = report.payload
+        return result
 
     # Accept timezone-aware ISO dates and normalize to UTC; missing dates use server time.
     def report_time(payload, key):
@@ -1630,7 +1641,6 @@ def create_app(url=None, bootstrap=True):
         base_revision: int = Form(),
         file: UploadFile = File(),
         replaces_id: str | None = Form(default=None),
-        _slot=Depends(image_admission),
         u=Depends(user_dep),
         db=Depends(db_dep),
     ):
@@ -1640,7 +1650,7 @@ def create_app(url=None, bootstrap=True):
             if replaces_id == pid:
                 raise HTTPException(422, "A fotografia editada precisa de um novo ID")
         data = file_bytes(file, limit=60 * 1024 * 1024)
-        # Images are fully decoded; videos receive bounded container/stream inspection.
+        # Images are fully decoded; video containers and packets are checked.
         # Reject unsupported evidence before committing an immutable attachment.
         try:
             mime = inspect_evidence(data)

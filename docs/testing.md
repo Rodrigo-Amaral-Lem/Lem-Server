@@ -172,7 +172,11 @@ loopback-only PostgreSQL fixture and `LEM_TEST_POSTGRES_URL` described above.
 
 ## Checklist v8 and recovery deadlines
 
-Run `server/tests/test_trip_time_and_recovery.py` for v7 corrections, the two new millisecond readings, PDF and ZIP contents, and retention. Cases include the exact 48-hour and 14-day limits, preventive reimport, a separately deleted job whose corrective coverage is removed, and simultaneous closure/deletion. The recovery and race cases accept the isolated PostgreSQL fixture as well as SQLite. Run `test_form_evolution.py` with the App migration projection for cross-component parity.
+Run `server/tests/test_trip_time_and_recovery.py` for v7 corrections, the two new millisecond readings, PDF and ZIP contents, and retention. Cases include the exact 48-hour and 14-day limits, preventive reimport, stale removal retries after recovery, a separately deleted job whose corrective coverage is removed, and simultaneous closure/deletion. Permanent commissioning expiry resolves a pending visit on SQLite and PostgreSQL. The PostgreSQL deadline case holds an intervention row lock while recovery waits. Run `test_form_evolution.py` with the App migration projection for cross-component parity.
+
+`test_evidence_downloads.py` checks that a busy upload does not consume the second body, a closed
+cache entry reloads a durable original, and a stalled response frees its download slot.
+`test_video_formats.py` includes fast-start MP4 files missing samples referenced by the index.
 
 ## Checklist v7 regressions
 

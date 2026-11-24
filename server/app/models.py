@@ -226,6 +226,15 @@ class RemovedCoverage(Base):
     purge_after: Mapped[str] = mapped_column(String(50), index=True)
 
 
+class MembershipRevision(Base):
+    """A restore advances the generation used to authorize removal retries."""
+    __tablename__ = "membership_revisions"
+    kind: Mapped[str] = mapped_column(String(12), primary_key=True)
+    contract_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    member_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer)
+
+
 class CoverageTrashLink(Base):
     """Identify exactly the intervention scopes removed with a commercial membership."""
     __tablename__ = "coverage_trash_links"

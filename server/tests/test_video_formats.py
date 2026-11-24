@@ -53,3 +53,25 @@ def test_real_video_formats_and_limits(tmp_path, source, options, suffix, mime):
     else:
         with pytest.raises(InvalidImage):
             inspect_evidence(data)
+
+
+def test_faststart_video_must_include_the_referenced_samples(tmp_path):
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        pytest.skip("ffmpeg and ffprobe required (included in the production image)")
+    target = tmp_path / "faststart.mp4"
+    subprocess.run(
+        ["ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=128x96:r=25:d=3",
+         "-c:v", "libx264", "-threads", "1", "-movflags", "+faststart", str(target)],
+        check=True, timeout=30,
+    )
+    data = target.read_bytes()
+    assert inspect_evidence(data) == "video/mp4"
+    media_box = data.index(b"mdat") - 4
+    assert data.index(b"moov") < media_box
+    partial = data[:(len(data) + media_box) // 2]
+    with pytest.raises(InvalidImage):
+        inspect_evidence(partial)
+    # A plausible box length cannot replace the video samples referenced by moov.
+    adjusted = partial[:media_box] + (len(partial) - media_box).to_bytes(4, "big") + partial[media_box + 4:]
+    with pytest.raises(InvalidImage):
+        inspect_evidence(adjusted)

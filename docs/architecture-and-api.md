@@ -173,15 +173,19 @@ reopens the database to recover a missing temporary file: it fails and the user 
 Staging/rendering failures clean up temporary files and leave the source/correction records intact.
 Already-compressed media and PDF entries are stored without ZIP recompression. Export/image/download
 admission slots fail fast with 503 instead of holding database connections while waiting.
+Evidence upload admission runs before multipart body consumption. Busy uploads return HTTP 503
+with `Retry-After: 15`. The admitted slot also bounds temporary multipart storage. Video acceptance
+checks complete MP4/3GP boxes and reads referenced packets using the bounded FFprobe process.
 
 Original evidence GET supports single byte ranges (206), SHA-256 ETags and `If-Range`; an invalid
 range returns 416 with the representation length. Access and report/photo association are checked
 before serving any bytes. A private temporary disk cache shares immutable originals between devices
 and range requests, with one loader per original and two database BLOB loads at most in parallel.
-The database closes before cache waits or sending. Responses read independent handles in 256-KiB
-blocks; disconnect releases the handle and admission slot. Idle cache budget is 512 MiB/2048 files,
-with ten-minute expiry checked on access; active leases remain pinned until their responses finish.
-Download overload returns 503 with Retry-After 2 seconds. Export admission retains its separate limit.
+The database closes before cache waits or sending. Responses track independent byte positions and read
+256-KiB blocks. Disconnects and writes stalled for 30 seconds release the lease and admission slot.
+The idle cache budget is 512 MiB and 2048 files, with ten-minute expiry checked on access. Private
+temporary files are released by the operating system if the worker exits. Download overload returns
+503 with `Retry-After: 2`. The client staggers retries for busy original downloads.
 
 `report_corrections` records source revision, editor, original owner, cloned photo mapping, opening
 station identity and commit fingerprint. Editing copies require admin plus
@@ -215,20 +219,27 @@ media by checkpoint. Media filenames share the identifier and add the evidence U
 UUIDs address reports and evidence in the API and storage.
 [Naming rules](../../Common/docs/report-contract.md#public-report-identifiers-and-export-names)
 
-The lifespan task checks expired contract trash and removed IDs roughly every minute. The 48-hour and 14-day limits use UTC and exclude the exact deadline. Retrying deletion preserves the original expiry. A job already deleted separately is not restored with its coverage. Restore coverage before separately restoring the job. Export/media limits and retry
+The lifespan task checks expired contract trash and removed IDs roughly every minute. The 48-hour and 14-day limits use UTC and exclude the exact deadline. Corrective coverage restore and expiry take the same intervention locks and check the deadline after acquiring them. Permanently purging a pending intervention resolves its work-order visit in the same transaction. A job already deleted separately is not restored with its coverage. Restore coverage before separately restoring the job. Export/media limits and retry
 semantics are documented in [security](../../Common/docs/security.md); operator procedures are in
 [administration](administration.md).
 
+The preventive charger and active corrective member listings include `membership_revision`.
+Send the observed value as a query parameter on membership DELETE, including on retries. A retry
+at the same revision preserves the deadline. Recovery or reattachment advances the revision and
+an older DELETE receives 409. Missing revisions are treated as zero for original memberships.
+
 ### Checklist v8 migration and compatibility
 
-App/API 0.11.1 use v8. The server checks client compatibility on login and authenticated requests. Draft reads project v6 through v7 to v8 and v7 directly to v8. The next write persists the projection and moves the evidence checkpoints atomically with the revision check. Creating a correction upgrades its working copy and preserves the closed original. The server recalculates MAN.13 (mA) and MAN.20 (Ω) using MAN.11. MAN.12 and MAN.14 store integer milliseconds or NA. MAN.14 also records the technician’s result. See the [report contract](../../Common/docs/report-contract.md).
+App/API 0.11.2 use v8. The server checks client compatibility on login and authenticated requests. Draft reads project v6 through v7 to v8 and v7 directly to v8. The next write persists the projection and moves the evidence checkpoints atomically with the revision check. Creating a correction upgrades its working copy and preserves the closed original. The server recalculates MAN.13 (mA) and MAN.20 (Ω) using MAN.11. MAN.12 and MAN.14 store integer milliseconds or NA. MAN.14 also records the technician’s result. See the [report contract](../../Common/docs/report-contract.md).
+Sync can request `include_stored_payload=true` on a report GET. If the visible form has been
+projected, `stored_payload` provides the original answer snapshot for a lost evidence acknowledgement.
 Independent photo uploads also persist that migration before validating the projected checkpoint.
 Invalid media and stale revisions leave the saved legacy report and originals intact.
 Pre-v6 correction copies use the current form with an optional `ANT` section preserving old
 answers, observations and evidence. Reused IDs are never treated as current station-identity
 fields. Their historical signatures remain evidence; current questions require a new signature.
 GET projects an already-open old correction identically to its transactional write migration.
-`frozen_history: true` permits completing the staged upload of a previously closed offline v6 report;
+`frozen_history: true` permits completing the staged upload of a previously closed offline v6 or v7 report;
 the temporary `template.frozen_upload` state disables editing until its original closure completes.
 
 ## Work orders

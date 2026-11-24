@@ -58,7 +58,7 @@ runs the API as user `lem`.
 | `LEM_DOMAIN` | Proxy hostname; default `lem.rodrod.pt` |
 | `POSTGRES_PASSWORD` | Required database password; installer generates URL-safe hex |
 | `ADMIN_EMAIL`, `ADMIN_NAME`, `ADMIN_PASSWORD` | Initial account only; password must have at least 12 characters |
-| `LEM_MIN_CLIENT_VERSION`, `LEM_LATEST_CLIENT_VERSION` | Admitted version interval, defaults `0.11.1` / `0.11.1` |
+| `LEM_MIN_CLIENT_VERSION`, `LEM_LATEST_CLIENT_VERSION` | Admitted version interval, defaults `0.11.2` / `0.11.2` |
 | `LEM_UPDATE_URL` | Optional HTTPS update/download instructions URL |
 | `LEM_EXPORT_CONCURRENCY`, `LEM_IMAGE_CONCURRENCY` | API admission slots; defaults 2/1, capped at 4/2 |
 | `LEM_DOWNLOAD_CONCURRENCY` | Simultaneous original-evidence responses per worker; default 8, capped at 16 |
@@ -236,3 +236,11 @@ Install the update over the existing client profile to retain local drafts and a
 Deploy the API with `LEM_MIN_CLIENT_VERSION=0.11.1` and `LEM_LATEST_CLIENT_VERSION=0.11.1`. Set both values in existing deployment environments as well. Older clients receive an upgrade explanation on login and authenticated requests because v8 changes the meaning and units of MAN fields. Install Android code 197 or desktop 0.11.1 over the current profile to retain local reports and evidence.
 
 Startup creates the recovery records for removed preventive IDs, corrective coverage and expired interventions. Deadlines start when the administrator removes the request (48 hours) or ID (14 days). Existing detached IDs without such a record keep their historical treatment. Verify an old editable report and a closed-report correction against v8, and check PDF/ZIP exports after acceptance.
+
+### Upgrade to 0.11.2
+
+Set `LEM_MIN_CLIENT_VERSION=0.11.2` and `LEM_LATEST_CLIENT_VERSION=0.11.2` and recreate the API.
+Install Android code 198 or desktop 0.11.2 over the existing profile. Earlier clients cannot
+identify the current membership revision after recovery, so the API asks them to upgrade.
+Checklist v8 still applies. On startup the API creates the membership revision table and resolves
+pending work-order items that reference permanently deleted interventions.

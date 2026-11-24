@@ -163,6 +163,7 @@ def test_membership_14_days_restores_only_its_own_reports(request, backend, toda
     path, photo, image = create_report(api, h, key, closed=True)
     before = ok(api.get(path, headers=h))
     _, tech = account(api, h, "coverage-tech")
+    _, second_admin = account(api, h, "coverage-admin", "admin")
     assert api.delete(endpoint, headers=tech).status_code == 403
     instant = datetime.now(timezone.utc)
     ok(api.delete(endpoint, headers=h))
@@ -176,11 +177,14 @@ def test_membership_14_days_restores_only_its_own_reports(request, backend, toda
     if kind == "corrective":
         assert api.post(f"/api/contracts/{key}/restore", headers=h).status_code == 409
     assert api.post(endpoint+"/restore", headers=tech).status_code == 403
+    ok(api.post(endpoint+"/restore", headers=second_admin))
     ok(api.post(endpoint+"/restore", headers=h))
-    ok(api.post(endpoint+"/restore", headers=h))
+    assert api.delete(endpoint, headers=h).status_code == 409
     assert ok(api.get(path, headers=h)) == before
     assert api.get(photo, headers=h).content == image
-    ok(api.delete(endpoint, headers=h))
+    member, = ok(api.get(endpoint.rsplit("/", 1)[0], headers=h))
+    assert member["membership_revision"] == 1
+    ok(api.delete(endpoint, params={"membership_revision": member["membership_revision"]}, headers=h))
     with app.state.factory.begin() as db:
         cutoff = datetime.now(timezone.utc).isoformat()
         if kind == "preventive":
@@ -204,14 +208,17 @@ def test_reimport_respects_last_recoverable_instant_and_does_not_revive_expired_
     before = ok(api.get(path, headers=h))
     member = f"/api/contracts/{c['id']}/chargers/{charger['id']}"
     removed = f"/api/contracts/{c['id']}/removed-chargers"
-    for last_instant in (True, False):
-        ok(api.delete(member, headers=h))
+    for revision, last_instant in enumerate((True, False)):
+        deletion = {"membership_revision": revision}
+        ok(api.delete(member, params=deletion, headers=h))
         deadline = datetime.fromisoformat(ok(api.get(removed, headers=h))[0]["purge_after"])
         instant = deadline - timedelta(microseconds=1) if last_instant else deadline
         monkeypatch.setattr(contract_trash, "utc_now", lambda: instant)
         ok(upload(api, h, c["id"], True, xlsx((charger["external_id"],))))
         rows = ok(api.get(member.rsplit("/", 1)[0], headers=h))
         assert rows[0]["id"] == charger["id"]
+        assert rows[0]["membership_revision"] == revision + 1
+        assert api.delete(member, params=deletion, headers=h).status_code == 409
         if last_instant:
             assert ok(api.get(path, headers=h)) == before
             assert api.get(photo, headers=h).content == image
@@ -243,6 +250,115 @@ def test_job_and_membership_recovery_keep_independent_deadlines(setup, today, mo
     monkeypatch.setattr(main, "now", lambda: entry["purge_after"])
     assert api.post(restore, headers=h).status_code == 410
     assert not ok(api.get("/api/admin/deleted-contracts", headers=h))
+
+
+def test_coverage_restore_rechecks_deadline_after_waiting_for_scope(postgres_setup, today, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from sqlalchemy import event, select
+    from app import interventions
+    from app.models import Contract
+
+    api, headers, contract, app = postgres_setup
+    charger = station(api, headers, contract)
+    coverage = ok(import_contract(api, headers, [charger["external_id"]]))
+    job, _ = intervention(api, headers, charger, "corrective")
+    report, photo, _ = create_report(api, headers, job, closed=True)
+    member = f"/api/corrective-contracts/{coverage['id']}/members/{charger['station_id']}"
+    deadline = datetime.fromisoformat(ok(api.delete(member, headers=headers))["purge_after"])
+    instant = deadline - timedelta(microseconds=1)
+    monkeypatch.setattr(interventions, "utc_now", lambda: instant)
+
+    waiting = Event()
+    factory = app.state.factory
+    engine = factory.kw["bind"]
+
+    def observe_scope_lock(conn, cursor, statement, parameters, context, executemany):
+        if "FROM contracts" in statement and "FOR UPDATE" in statement:
+            waiting.set()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with factory.begin() as blocker:
+            blocker.scalar(select(Contract.id).where(Contract.id == job).with_for_update())
+            event.listen(engine, "before_cursor_execute", observe_scope_lock)
+            try:
+                restore = pool.submit(api.post, member + "/restore", headers=headers)
+                assert waiting.wait(10)
+                instant = deadline
+            finally:
+                event.remove(engine, "before_cursor_execute", observe_scope_lock)
+        assert restore.result(timeout=10).status_code == 410
+    assert app.state.purge_expired_contracts(deadline) == 1
+    assert api.post(member + "/restore", headers=headers).status_code == 410
+    assert api.get(report, headers=headers).status_code == 404
+    assert api.get(photo, headers=headers).status_code == 404
+
+
+@pytest.mark.parametrize("backend", ["setup", "postgres_setup"])
+def test_commissioning_purge_resolves_a_started_order(request, backend, monkeypatch):
+    from zoneinfo import ZoneInfo
+    from app import work_orders
+
+    api, headers, contract, app = request.getfixturevalue(backend)
+    day = datetime(2026, 11, 24, 10, tzinfo=ZoneInfo("Europe/Lisbon"))
+    monkeypatch.setattr(work_orders, "lisbon_now", lambda: day)
+    target, job = intervention(api, headers, station(api, headers, contract), "commissioning")
+    report, photo, image = create_report(api, headers, target)
+    technician, _ = account(api, headers, "assigned-commissioning")
+    order = str(uuid4())
+    plan = {"id": order, "revision": 0, "start": day.date().isoformat(),
+            "due": day.date().isoformat(), "technicians": [technician], "targets": [target]}
+    ok(api.put(f"/api/work-orders/{order}", headers=headers, json=plan))
+
+    def listing():
+        result, = ok(api.get("/api/work-orders", headers=headers))["orders"]
+        return result
+
+    confirmation = {"confirmation": "APAGAR"}
+    deleted = ok(api.post(job + "/trash", headers=headers, json=confirmation))
+    assert listing()["items"][0]["state"] == "pending"
+    ok(api.post(f"/api/contracts/{target}/restore", headers=headers))
+    assert api.get(photo, headers=headers).content == image
+    deleted = ok(api.post(job + "/trash", headers=headers, json=confirmation))
+    deadline = datetime.fromisoformat(deleted["purge_after"])
+    assert app.state.purge_expired_contracts(deadline) == 1
+    completed = listing()
+    assert completed["completed"] == deadline.isoformat()
+    assert completed["revision"] == 2
+    assert completed["items"][0]["state"] == "invalid"
+    assert "eliminado definitivamente" in completed["items"][0]["note"]
+    assert api.get(report, headers=headers).status_code == 404
+
+
+def test_startup_repairs_a_legacy_purged_intervention_order(setup, monkeypatch):
+    from app import work_orders
+    from app.main import create_app
+    from app.models import DataMigration
+    from fastapi.testclient import TestClient
+
+    api, headers, contract, app = setup
+    target, job = intervention(api, headers, station(api, headers, contract), "commissioning")
+    technician, _ = account(api, headers, "legacy-commissioning")
+    order = str(uuid4())
+    day = work_orders.lisbon_now().date().isoformat()
+    plan = {"id": order, "revision": 0, "start": day, "due": day,
+            "technicians": [technician], "targets": [target]}
+    ok(api.put(f"/api/work-orders/{order}", headers=headers, json=plan))
+    deleted = ok(api.post(job + "/trash", headers=headers, json={"confirmation": "APAGAR"}))
+    with monkeypatch.context() as old_purge:
+        old_purge.setattr(work_orders, "expire_intervention_items", lambda *args: None)
+        assert app.state.purge_expired_contracts(datetime.fromisoformat(deleted["purge_after"])) == 1
+    factory = app.state.factory
+    with factory.begin() as db:
+        db.delete(db.get(DataMigration, "purged-intervention-work-items-v1"))
+    assert ok(api.get("/api/work-orders", headers=headers))["orders"][0]["items"][0]["state"] == "pending"
+    database_url = str(factory.kw["bind"].url)
+    with TestClient(create_app(database_url, bootstrap=False), headers=dict(api.headers)) as upgraded:
+        repaired, = ok(upgraded.get("/api/work-orders", headers=headers))["orders"]
+        assert repaired["completed"] and repaired["revision"] == 2
+        assert repaired["items"][0]["state"] == "invalid"
+    with TestClient(create_app(database_url, bootstrap=False), headers=dict(api.headers)) as restarted:
+        assert ok(restarted.get("/api/work-orders", headers=headers))["orders"] == [repaired]
 
 
 @pytest.mark.parametrize("backend", ["setup", "postgres_setup"])

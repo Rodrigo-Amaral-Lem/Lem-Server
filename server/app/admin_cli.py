@@ -362,7 +362,7 @@ def contract_commands(db, args, factory):
         # a successful deletion. execute() owns the sole commit.
         cid = c.id
         audit(db, "contract.force-purge", cid)
-        purge_contract(db, c, entry)
+        purge_contract(db, c, entry, utc_now())
         return dict(id=cid, purged=True)
 
 
@@ -518,7 +518,7 @@ def charger_commands(db, args):
             charger = Charger(id=str(uuid.uuid4()), contract_id=c.id, external_id=station.external_id, station=station)
             db.add(charger)
         elif db.get(DetachedCharger, charger.id):
-            reattach_charger(db, charger.id)
+            reattach_charger(db, charger)
         else:
             raise ValueError("O PCVE já pertence ao contrato")
     else:

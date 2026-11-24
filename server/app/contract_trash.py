@@ -11,12 +11,14 @@ finishes an accepted operation before hiding/deleting its contract.
 from datetime import datetime, timedelta, timezone
 import uuid
 
+from fastapi import HTTPException
 from sqlalchemy import select, delete
 from .models import (
     Contract,
     ContractBranding,
     ContractReportStyle,
     ContractTrash,
+    CoverageTrashLink,
     Assignment,
     Charger,
     Report,
@@ -30,6 +32,7 @@ from .models import (
     DeletedIntervention,
     RemovedCharger,
     RemovedCoverage,
+    MembershipRevision,
     WorkItemDraft,
     DetachedCharger,
 )
@@ -37,6 +40,21 @@ from .models import (
 RETENTION = timedelta(days=30)
 MEMBERSHIP_RETENTION = timedelta(days=14)
 INTERVENTION_RETENTION = timedelta(hours=48)
+
+
+def check_membership_revision(db, kind, contract_id, member_id, expected):
+    entry = db.get(MembershipRevision, (kind, contract_id, member_id))
+    if expected != (entry.revision if entry else 0):
+        raise HTTPException(409, "A associação do PCVE mudou. Atualize a lista antes de o retirar.")
+
+
+def advance_membership_revision(db, kind, contract_id, member_id):
+    # Called with the catalogue lock by every path that reattaches a membership.
+    entry = db.get(MembershipRevision, (kind, contract_id, member_id))
+    if entry:
+        entry.revision += 1
+    else:
+        db.add(MembershipRevision(kind=kind, contract_id=contract_id, member_id=member_id, revision=1))
 
 
 def purge_charger_reports(db, charger_id):
@@ -57,8 +75,9 @@ def purge_charger_reports(db, charger_id):
         db.execute(operation.execution_options(synchronize_session=False))
 
 
-def reattach_charger(db, charger_id, *, restore=False):
+def reattach_charger(db, charger, *, restore=False):
     """Reimporting after expiry starts a fresh membership without resurrecting reports."""
+    charger_id = charger.id
     entry = db.get(RemovedCharger, charger_id)
     if entry is not None:
         if entry.purge_after <= utc_now().isoformat():
@@ -66,7 +85,10 @@ def reattach_charger(db, charger_id, *, restore=False):
                 return False
             purge_charger_reports(db, charger_id)
         db.delete(entry)
-    db.execute(delete(DetachedCharger).where(DetachedCharger.charger_id == charger_id))
+    detached = db.get(DetachedCharger, charger_id)
+    if detached:
+        advance_membership_revision(db, "preventive", charger.contract_id, charger_id)
+        db.delete(detached)
     return True
 
 
@@ -91,7 +113,7 @@ def purge_memberships(factory, instant=None):
             db.execute(delete(RemovedCoverage).where(RemovedCoverage.purge_after <= cutoff))
 
 
-def purge_contract(db, contract, entry):
+def purge_contract(db, contract, entry, instant):
     """Caller holds the contract lock; keep the entire purge in its transaction."""
     cid = contract.id
     chargers = select(Charger.id).where(Charger.contract_id == cid)
@@ -99,6 +121,14 @@ def purge_contract(db, contract, entry):
     removed_reports = select(DeletedReport.id).where(DeletedReport.charger_id.in_(chargers))
     job = db.get(Intervention, cid)
     if job is not None:
+        from .work_orders import expire_intervention_items
+
+        expire_intervention_items(db, cid, entry.deleted_by, instant.isoformat())
+        link = db.get(CoverageTrashLink, cid)
+        if link:
+            membership = db.get(RemovedCoverage, (link.contract_id, link.station_id))
+            if membership and membership.purge_after <= instant.isoformat():
+                db.delete(membership)
         db.add(DeletedIntervention(id=cid, reference=contract.name))
         db.delete(job)
         db.flush()
@@ -115,6 +145,7 @@ def purge_contract(db, contract, entry):
         delete(ImportBatch).where(ImportBatch.contract_id == cid),
         delete(ContractBranding).where(ContractBranding.contract_id == cid),
         delete(ContractReportStyle).where(ContractReportStyle.contract_id == cid),
+        delete(MembershipRevision).where(MembershipRevision.kind == "preventive", MembershipRevision.contract_id == cid),
         delete(Assignment).where(Assignment.contract_id == cid),
         delete(Charger).where(Charger.contract_id == cid),
     ]
@@ -133,19 +164,26 @@ def utc_now():
 
 
 def purge_expired(factory, instant=None, only_contract=None):
+    from .stations import lock_catalogue
+
     instant = instant or utc_now()
     # Keep each contract in its own transaction. SKIP LOCKED makes multiple API
     # workers safe, and a busy contract can be retried on the next minute's sweep.
     with factory() as db:
-        query = select(ContractTrash.contract_id).where(
+        query = select(ContractTrash.contract_id, Intervention.kind).outerjoin(
+            Intervention, Intervention.id == ContractTrash.contract_id
+        ).where(
             ContractTrash.purge_after <= instant.isoformat()
         )
         if only_contract is not None:
             query = query.where(ContractTrash.contract_id == only_contract)
-        ids = list(db.scalars(query))
+        scopes = db.execute(query).all()
     count = 0
-    for cid in ids:
+    for cid, intervention_kind in scopes:
         with factory() as db:
+            # Use the same lock order as planning, closure and coverage recovery.
+            if intervention_kind:
+                lock_catalogue(db)
             contract = db.scalar(
                 select(Contract)
                 .where(Contract.id == cid)
@@ -156,7 +194,7 @@ def purge_expired(factory, instant=None, only_contract=None):
             entry = db.get(ContractTrash, cid)
             if entry is None or entry.purge_after > instant.isoformat():
                 continue  # Another admin restored it while this sweep was queued.
-            purge_contract(db, contract, entry)
+            purge_contract(db, contract, entry, instant)
             db.commit()
             count += 1
     return count
