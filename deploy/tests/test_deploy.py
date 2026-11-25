@@ -172,7 +172,7 @@ def test_normal_update_keeps_env_and_backs_up_database(deployment):
     assert r.returncode == 0, r.stdout + r.stderr
     assert (
         target / "deploy/.env"
-    ).read_bytes() == oldenv + b"LEM_LATEST_CLIENT_VERSION=0.11.2\nLEM_MIN_CLIENT_VERSION=0.11.2\n"
+    ).read_bytes() == oldenv + b"LEM_LATEST_CLIENT_VERSION=0.12.0\nLEM_MIN_CLIENT_VERSION=0.11.2\n"
     assert (target / "server/run.py").read_bytes() == (project / "server/run.py").read_bytes()
     assert not (target / "server/obsolete.py").exists()
     assert next((target / ".deploy-backups").glob("*/server/obsolete.py")).exists()

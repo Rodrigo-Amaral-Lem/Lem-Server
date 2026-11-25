@@ -230,7 +230,7 @@ an older DELETE receives 409. Missing revisions are treated as zero for original
 
 ### Checklist v8 migration and compatibility
 
-App/API 0.11.2 use v8. The server checks client compatibility on login and authenticated requests. Draft reads project v6 through v7 to v8 and v7 directly to v8. The next write persists the projection and moves the evidence checkpoints atomically with the revision check. Creating a correction upgrades its working copy and preserves the closed original. The server recalculates MAN.13 (mA) and MAN.20 (Ω) using MAN.11. MAN.12 and MAN.14 store integer milliseconds or NA. MAN.14 also records the technician’s result. See the [report contract](../../Common/docs/report-contract.md).
+App/API 0.12.0 use v8. Clients on 0.11.2 remain compatible and receive an update notice. The server checks client compatibility on login and authenticated requests. Draft reads project v6 through v7 to v8 and v7 directly to v8. The next write persists the projection and moves the evidence checkpoints atomically with the revision check. Creating a correction upgrades its working copy and preserves the closed original. The server recalculates MAN.13 (mA) and MAN.20 (Ω) using MAN.11. MAN.12 and MAN.14 store integer milliseconds or NA. MAN.14 also records the technician’s result. See the [report contract](../../Common/docs/report-contract.md).
 Sync can request `include_stored_payload=true` on a report GET. If the visible form has been
 projected, `stored_payload` provides the original answer snapshot for a lost evidence acknowledgement.
 Independent photo uploads also persist that migration before validating the projected checkpoint.

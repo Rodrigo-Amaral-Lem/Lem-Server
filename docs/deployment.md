@@ -58,7 +58,7 @@ runs the API as user `lem`.
 | `LEM_DOMAIN` | Proxy hostname; default `lem.rodrod.pt` |
 | `POSTGRES_PASSWORD` | Required database password; installer generates URL-safe hex |
 | `ADMIN_EMAIL`, `ADMIN_NAME`, `ADMIN_PASSWORD` | Initial account only; password must have at least 12 characters |
-| `LEM_MIN_CLIENT_VERSION`, `LEM_LATEST_CLIENT_VERSION` | Admitted version interval, defaults `0.11.2` / `0.11.2` |
+| `LEM_MIN_CLIENT_VERSION`, `LEM_LATEST_CLIENT_VERSION` | Admitted version interval, defaults `0.11.2` / `0.12.0` |
 | `LEM_UPDATE_URL` | Optional HTTPS update/download instructions URL |
 | `LEM_EXPORT_CONCURRENCY`, `LEM_IMAGE_CONCURRENCY` | API admission slots; defaults 2/1, capped at 4/2 |
 | `LEM_DOWNLOAD_CONCURRENCY` | Simultaneous original-evidence responses per worker; default 8, capped at 16 |
@@ -244,3 +244,7 @@ Install Android code 198 or desktop 0.11.2 over the existing profile. Earlier cl
 identify the current membership revision after recovery, so the API asks them to upgrade.
 Checklist v8 still applies. On startup the API creates the membership revision table and resolves
 pending work-order items that reference permanently deleted interventions.
+
+### Upgrade to 0.12.0
+
+Keep the minimum at 0.11.2 and set `LEM_LATEST_CLIENT_VERSION=0.12.0` before distributing Android code 199 or desktop 0.12.0. Recreate the API with the updated settings. Clients on 0.11.2 can log in and receive an update notice. Install the new app over the existing profile to retain local reports.
